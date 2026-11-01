@@ -58,19 +58,6 @@ func TestRetryPolicyFromConfig(t *testing.T) {
 	}
 }
 
-// TestXiaoZhiBackoffFromConfig 验证小智重连退避策略映射。
-func TestXiaoZhiBackoffFromConfig(t *testing.T) {
-	c := config.ConnectionConfig{
-		RetryInitialBackoffS: 1,
-		RetryMaxBackoffS:     120,
-		RetryMultiplier:      2,
-	}
-	got := xiaozhiBackoffFromConfig(c)
-	if got.Initial != time.Second || got.Max != 120*time.Second || got.Multiplier != 2 {
-		t.Fatalf("xiaozhiBackoffFromConfig = %+v", got)
-	}
-}
-
 // TestEnsureJWTSecretGeneratesAndPersists 验证 EnsureJWTSecret 在密钥为空时生成非空密钥并写回，
 // 在密钥已存在时保持不变（幂等）。
 func TestEnsureJWTSecretGeneratesAndPersists(t *testing.T) {

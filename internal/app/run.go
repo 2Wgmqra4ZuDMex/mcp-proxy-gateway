@@ -8,8 +8,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/coder/websocket"
-
 	"github.com/myGithub/mcp-proxy-gateway/internal/config"
 	"github.com/myGithub/mcp-proxy-gateway/internal/safego"
 )
@@ -188,15 +186,6 @@ func (a *App) startBackground(ctx context.Context) {
 
 	// 审计保留期清理：以 24 小时为周期独立运行（Req 22.5）。
 	a.runBackgroundStep("启动审计保留期清理", func() { a.startAuditRetention(ctx) })
-
-	// 小智接入：启用时连出到接入点并持续按退避重连（Req 15）。
-	a.runBackgroundStep("启动小智接入连接", func() {
-		if a.xiaozhiConn.Enabled() {
-			if err := a.xiaozhiConn.Start(ctx); err != nil {
-				a.logger.Error("启动小智接入连接失败", "error", err)
-			}
-		}
-	})
 }
 
 func (a *App) runBackgroundStep(name string, step func()) {
@@ -232,32 +221,6 @@ func (a *App) ApplySettings(cfg config.YAMLConfig) error {
 	}
 	if a.agg != nil {
 		a.agg.SetRoutingStrategy(cfg.Aggregation.ToolRoutingStrategy)
-	}
-
-	if a.xiaozhiConn == nil {
-		return nil
-	}
-	wasEnabled := a.xiaozhiConn.Enabled()
-	wasEndpoint := a.xiaozhiConn.Endpoint()
-	wasMode := a.xiaozhiConn.Mode()
-	running := a.xiaozhiConn.Running()
-	modeChanged := cfg.XiaoZhi.Mode != wasMode
-	restart := running && cfg.XiaoZhi.Enabled && (cfg.XiaoZhi.Endpoint != wasEndpoint || modeChanged)
-	stop := running && (!cfg.XiaoZhi.Enabled || cfg.XiaoZhi.Endpoint != wasEndpoint || modeChanged)
-
-	if stop {
-		a.xiaozhiConn.Stop()
-		running = false
-	}
-
-	if err := a.xiaozhiConn.Reconfigure(cfg.XiaoZhi.Endpoint, cfg.XiaoZhi.Enabled, cfg.XiaoZhi.Mode); err != nil {
-		return err
-	}
-
-	if cfg.XiaoZhi.Enabled && (!running || !wasEnabled || restart) {
-		if err := a.xiaozhiConn.Start(context.Background()); err != nil {
-			return err
-		}
 	}
 	return nil
 }
@@ -349,9 +312,6 @@ func (a *App) shutdown() {
 	}
 
 	// 2) 停止后台服务。
-	if a.xiaozhiConn != nil {
-		a.xiaozhiConn.Stop()
-	}
 	if a.scheduler != nil {
 		a.scheduler.Stop()
 	}
@@ -373,14 +333,4 @@ func (a *App) shutdown() {
 		a.logger.Warn("释放基础设施连接时出错", "error", err)
 	}
 	a.logger.Info("已完成优雅停机")
-}
-
-// probeXiaoZhi 探测小智接入点连通性：尝试建立一次 WebSocket 连接后立即关闭（Req 20.5）。
-func probeXiaoZhi(ctx context.Context, endpoint string) error {
-	conn, _, err := websocket.Dial(ctx, endpoint, nil)
-	if err != nil {
-		return err
-	}
-	_ = conn.Close(websocket.StatusNormalClosure, "probe done")
-	return nil
 }

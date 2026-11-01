@@ -31,7 +31,6 @@ import (
 	"github.com/myGithub/mcp-proxy-gateway/internal/store"
 	syncsvc "github.com/myGithub/mcp-proxy-gateway/internal/sync"
 	"github.com/myGithub/mcp-proxy-gateway/internal/syslog"
-	"github.com/myGithub/mcp-proxy-gateway/internal/xiaozhi"
 )
 
 // defaultAdminAddr 为管理端默认监听地址。
@@ -88,7 +87,6 @@ type App struct {
 	statCleaner   *stats.Cleaner
 	auditSvc      *audit.Service
 	auditRecorder *audit.Recorder
-	xiaozhiConn   *xiaozhi.Connector
 	mcpService    *mcpapi.Service
 	mcpEndpoints  *mcpapi.Endpoints
 	agg           *aggregation.Service

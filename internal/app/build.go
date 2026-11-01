@@ -6,7 +6,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/myGithub/mcp-proxy-gateway/internal/aggregation"
 	"github.com/myGithub/mcp-proxy-gateway/internal/apikey"
 	"github.com/myGithub/mcp-proxy-gateway/internal/audit"
@@ -28,7 +27,6 @@ import (
 	syncsvc "github.com/myGithub/mcp-proxy-gateway/internal/sync"
 	"github.com/myGithub/mcp-proxy-gateway/internal/template"
 	"github.com/myGithub/mcp-proxy-gateway/internal/transport"
-	"github.com/myGithub/mcp-proxy-gateway/internal/xiaozhi"
 )
 
 // build 构造各应用服务、领域核心与入站路由，并把它们接线到 *App。
@@ -230,19 +228,6 @@ func (a *App) build(envCfg config.EnvConfig) error {
 	mcpEndpoints.SetRequestBodyLimitMiB(yamlCfg.MCPAPI.RequestBodyLimitMiB)
 	a.mcpEndpoints = mcpEndpoints
 
-	// --- 小智接入服务（XiaoZhi_Connector）：出站 WS 客户端，按配置启停 ---
-	xzBackoff := xiaozhiBackoffFromConfig(yamlCfg.Connection)
-	a.xiaozhiConn = xiaozhi.NewConnector(
-		yamlCfg.XiaoZhi.Endpoint,
-		yamlCfg.XiaoZhi.Enabled,
-		nil,
-		xiaozhi.WithServerBuildFn(func(ctx context.Context, mode string) (*mcp.Server, error) {
-			return mcpService.BuildServerWithSource(ctx, "", mode, "xiaozhi")
-		}),
-		xiaozhi.WithBackoffPolicy(xzBackoff),
-		xiaozhi.WithLogger(a.logger),
-	)
-
 	// --- 健康检查：启动连通性探测器 + 详细健康汇总器（Req 20）---
 	pg := pinger{db: a.db, rdb: a.rdb}
 	a.prober = health.NewStartupProber(health.Options{
@@ -250,13 +235,11 @@ func (a *App) build(envCfg config.EnvConfig) error {
 		ListUpstreams: mgr.List,
 		ProbeUpstream: a.probeUpstreamFunc(factory),
 		Config:        a.cfg,
-		ProbeXiaoZhi:  probeXiaoZhi,
 		Logger:        a.logger,
 	})
 	detailReporter := health.NewDetailReporter(health.DetailReporterOptions{
 		Pinger:        pg,
 		ListUpstreams: mgr.List,
-		XiaoZhi:       a.xiaozhiConn,
 	})
 
 	// --- 管理 REST API 路由器（httpapi）：从各服务装配 Deps ---
@@ -321,15 +304,6 @@ func retryPolicyFromConfig(c config.ConnectionConfig) manager.RetryPolicy {
 		FailureThreshold:        c.FailureThreshold,
 		DemandReconnectCooldown: time.Duration(c.DemandReconnectCooldownS) * time.Second,
 		DemandReconnectWait:     time.Duration(c.DemandReconnectWaitS) * time.Second,
-	}
-}
-
-// xiaozhiBackoffFromConfig 复用连接退避配置作为小智重连退避策略（Req 15.4）。
-func xiaozhiBackoffFromConfig(c config.ConnectionConfig) xiaozhi.BackoffPolicy {
-	return xiaozhi.BackoffPolicy{
-		Initial:    time.Duration(c.RetryInitialBackoffS) * time.Second,
-		Max:        time.Duration(c.RetryMaxBackoffS) * time.Second,
-		Multiplier: c.RetryMultiplier,
 	}
 }
 

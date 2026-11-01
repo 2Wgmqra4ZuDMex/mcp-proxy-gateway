@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import AdminLayout from '@/components/layout/AdminLayout.vue'
 import PageBreadcrumb from '@/components/common/PageBreadcrumb.vue'
 import {
@@ -14,10 +14,7 @@ import {
 import { listAPIKeys } from '@/api/apikeys'
 import { getHealth, type DetailHealthReport } from '@/api/health'
 import {
-  extractAPIError,
   getSettingsSnapshot,
-  updateSettings,
-  type MCPMode,
   type ServerConfig,
   type YAMLConfig,
 } from '@/api/settings'
@@ -75,9 +72,7 @@ interface GuideSnippet {
 
 const loading = ref(false)
 const refreshing = ref(false)
-const saving = ref(false)
 const loadError = ref('')
-const formError = ref('')
 const copiedKey = ref('')
 const guideOpen = ref(false)
 const selectedGuidePreset = ref<MCPClientPresetKey>('generic')
@@ -104,11 +99,7 @@ const gatewayTools = ref<GatewayTool[]>([])
 const selectedAggregatedToolName = ref('')
 const toolDetailOpen = ref(false)
 
-const xiaozhiEnabled = ref(false)
-const xiaozhiEndpoint = ref('')
-const xiaozhiMode = ref<MCPMode>('full')
 const endpointTab = ref<'full' | 'smart'>('full')
-const fieldErrors = reactive<Record<string, string>>({})
 
 const effectiveServer = computed<ServerConfig | null>(() => runtimeServer.value ?? settings.value?.server ?? null)
 const targetServer = computed<ServerConfig | null>(() => settings.value?.server ?? runtimeServer.value ?? null)
@@ -402,20 +393,6 @@ const guideSnippets = computed<GuideSnippet[]>(() => [
     code: javascriptSnippet(),
   },
 ])
-const xiaozhiStatusLabel = computed(() => {
-  if (!settings.value?.xiaozhi.enabled) return '未启用'
-  if (health.value?.xiaozhi?.connected) return '已连接'
-  return '等待连接'
-})
-const xiaozhiStatusClass = computed(() => {
-  if (!settings.value?.xiaozhi.enabled) {
-    return 'bg-gray-100 text-gray-600 dark:bg-white/5 dark:text-gray-400'
-  }
-  if (health.value?.xiaozhi?.connected) {
-    return 'bg-success-50 text-success-700 dark:bg-success-500/10 dark:text-success-400'
-  }
-  return 'bg-warning-50 text-warning-700 dark:bg-warning-500/10 dark:text-warning-400'
-})
 const systemStatusLabel = computed(() => {
   if (health.value === null) return '加载中'
   return health.value.status === 'ok' ? '运行正常' : '部分异常'
@@ -426,21 +403,8 @@ const systemStatusClass = computed(() =>
     : 'bg-warning-50 text-warning-700 dark:bg-warning-500/10 dark:text-warning-400',
 )
 
-function syncForm(cfg: YAMLConfig): void {
-  xiaozhiEnabled.value = cfg.xiaozhi.enabled
-  xiaozhiEndpoint.value = cfg.xiaozhi.endpoint
-  xiaozhiMode.value = cfg.xiaozhi.mode || 'full'
-}
-
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : '数据加载失败，请稍后重试'
-}
-
-function clearFieldErrors(): void {
-  formError.value = ''
-  for (const key of Object.keys(fieldErrors)) {
-    delete fieldErrors[key]
-  }
 }
 
 function openGuide(): void {
@@ -650,7 +614,6 @@ async function loadAPIService(): Promise<void> {
     aggregatedToolDetails.value = tools.toolDetails
     gatewayTools.value = tools.gatewayTools
     ensureSelectedAggregatedTool()
-    syncForm(cfg)
   } catch (err) {
     loadError.value = errorMessage(err)
   } finally {
@@ -674,36 +637,6 @@ async function refreshStatus(): Promise<void> {
     toast.error(errorMessage(err))
   } finally {
     refreshing.value = false
-  }
-}
-
-async function saveAPISettings(): Promise<void> {
-  if (settings.value === null || saving.value) return
-  clearFieldErrors()
-  saving.value = true
-  const next: YAMLConfig = {
-    ...settings.value,
-    xiaozhi: {
-      enabled: xiaozhiEnabled.value,
-      endpoint: xiaozhiEndpoint.value.trim(),
-      mode: xiaozhiMode.value,
-    },
-  }
-  try {
-    settings.value = await updateSettings(next)
-    syncForm(settings.value)
-    await refreshStatus()
-    toast.success('API 服务设置已保存')
-  } catch (err) {
-    const body = extractAPIError(err)
-    if (body?.fields) {
-      for (const [key, value] of Object.entries(body.fields)) {
-        fieldErrors[key] = value
-      }
-    }
-    formError.value = body?.message ?? errorMessage(err)
-  } finally {
-    saving.value = false
   }
 }
 
@@ -816,11 +749,6 @@ onMounted(loadAPIService)
 
 const cardClass =
   'rounded-2xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-white/[0.03]'
-const inputClass =
-  'h-11 w-full rounded-lg border border-gray-300 bg-transparent px-4 text-sm text-gray-800 shadow-sm placeholder:text-gray-400 focus:border-brand-300 focus:ring-3 focus:ring-brand-500/10 focus:outline-none dark:border-gray-700 dark:text-white/90 dark:placeholder:text-white/30'
-const labelClass = 'mb-1.5 block text-sm font-medium text-gray-700 dark:text-gray-400'
-const hintClass = 'mt-1 text-xs text-gray-400 dark:text-gray-500'
-const errClass = 'mt-1 text-xs text-error-500'
 </script>
 
 <template>
@@ -913,7 +841,7 @@ const errClass = 'mt-1 text-xs text-error-500'
       </div>
     </section>
 
-    <div class="grid grid-cols-1 gap-6 3xl:grid-cols-[minmax(0,1.25fr)_minmax(360px,0.75fr)]">
+    <div class="grid grid-cols-1 gap-6">
       <section :class="cardClass">
         <div class="flex flex-wrap items-start justify-between gap-3">
           <div>
@@ -1122,122 +1050,6 @@ const errClass = 'mt-1 text-xs text-error-500'
             </div>
           </div>
         </div>
-      </section>
-
-      <section :class="cardClass">
-        <form class="flex h-full flex-col" @submit.prevent="saveAPISettings">
-          <div class="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <h3 class="text-base font-semibold text-gray-800 dark:text-white/90">第三方对接</h3>
-              <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
-                管理面向特定客户端或平台的扩展接入能力。
-              </p>
-            </div>
-          </div>
-
-          <p
-            v-if="formError !== ''"
-            class="mt-4 rounded-lg bg-error-50 px-4 py-2.5 text-sm text-error-600 dark:bg-error-500/10 dark:text-error-400"
-          >
-            {{ formError }}
-          </p>
-
-          <div class="mt-5 rounded-xl border border-gray-100 bg-gray-50 p-4 dark:border-gray-800 dark:bg-white/[0.02]">
-            <div class="flex flex-wrap items-start justify-between gap-3">
-              <div class="min-w-0">
-                <h4 class="text-sm font-semibold text-gray-800 dark:text-white/90">小智接入</h4>
-                <p class="mt-1 text-xs leading-5 text-gray-500 dark:text-gray-400">
-                  为小智客户端提供独立接入点，连接状态会随网关健康检查刷新。
-                </p>
-              </div>
-              <span class="rounded-full px-2.5 py-1 text-xs font-medium" :class="xiaozhiStatusClass">
-                {{ xiaozhiStatusLabel }}
-              </span>
-            </div>
-
-            <div class="mt-5 flex flex-col gap-5">
-              <div class="flex items-center justify-between gap-4 rounded-lg bg-white p-3 dark:bg-gray-900/60">
-                <div>
-                  <label :class="labelClass">启用小智接入</label>
-                  <p class="text-xs text-gray-400 dark:text-gray-500">保存后立即应用到当前网关进程。</p>
-                </div>
-                <button
-                  type="button"
-                  role="switch"
-                  :aria-checked="xiaozhiEnabled"
-                  class="relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition"
-                  :class="xiaozhiEnabled ? 'bg-brand-500' : 'bg-gray-300 dark:bg-gray-700'"
-                  @click="xiaozhiEnabled = !xiaozhiEnabled"
-                >
-                  <span
-                    class="inline-block h-4 w-4 transform rounded-full bg-white transition"
-                    :class="xiaozhiEnabled ? 'translate-x-6' : 'translate-x-1'"
-                  ></span>
-                </button>
-              </div>
-
-              <div>
-                <label :class="labelClass">接入点地址</label>
-                <input
-                  v-model="xiaozhiEndpoint"
-                  type="text"
-                  placeholder="wss://example.com/mcp"
-                  :disabled="!xiaozhiEnabled"
-                  :class="[inputClass, !xiaozhiEnabled ? 'opacity-60' : '']"
-                />
-                <p :class="hintClass">启用时需填写 ws:// 或 wss:// 地址。</p>
-                <p v-if="fieldErrors['xiaozhi.endpoint']" :class="errClass">
-                  {{ fieldErrors['xiaozhi.endpoint'] }}
-                </p>
-              </div>
-
-              <div>
-                <label :class="labelClass">对接模式</label>
-                <div class="mt-1 flex gap-1 rounded-lg border border-gray-200 bg-gray-50 p-1 dark:border-gray-700 dark:bg-gray-800/50">
-                  <button
-                    type="button"
-                    class="flex-1 rounded-md px-3 py-2 text-sm font-medium transition"
-                    :class="xiaozhiMode === 'full' ? 'bg-white text-gray-800 shadow-sm dark:bg-gray-700 dark:text-white/90' : 'text-gray-500 hover:text-gray-700 dark:text-gray-400'"
-                    :disabled="!xiaozhiEnabled"
-                    @click="xiaozhiMode = 'full'"
-                  >
-                    全量模式
-                  </button>
-                  <button
-                    type="button"
-                    class="flex-1 rounded-md px-3 py-2 text-sm font-medium transition"
-                    :class="xiaozhiMode === 'smart' ? 'bg-white text-gray-800 shadow-sm dark:bg-gray-700 dark:text-white/90' : 'text-gray-500 hover:text-gray-700 dark:text-gray-400'"
-                    :disabled="!xiaozhiEnabled"
-                    @click="xiaozhiMode = 'smart'"
-                  >
-                    智能模式
-                  </button>
-                </div>
-                <p :class="hintClass">
-                  {{ xiaozhiMode === 'smart' ? '通过网关工具按需发现和调用，减少工具噪音。' : '直接暴露全部聚合工具，兼容性好。' }}
-                </p>
-                <p v-if="fieldErrors['xiaozhi.mode']" :class="errClass">
-                  {{ fieldErrors['xiaozhi.mode'] }}
-                </p>
-              </div>
-
-              <div class="rounded-lg bg-white p-3 dark:bg-gray-900/60">
-                <p class="text-xs text-gray-400 dark:text-gray-500">当前连接</p>
-                <p class="mt-1 break-all text-sm font-medium text-gray-800 dark:text-white/90">
-                  {{ health?.xiaozhi?.endpoint || settings?.xiaozhi.endpoint || '未配置' }}
-                </p>
-              </div>
-
-              <button
-                type="submit"
-                class="self-end rounded-lg bg-brand-500 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-brand-600 disabled:opacity-60"
-                :disabled="saving || settings === null"
-              >
-                {{ saving ? '保存中…' : '保存小智接入' }}
-              </button>
-            </div>
-          </div>
-        </form>
       </section>
     </div>
 
