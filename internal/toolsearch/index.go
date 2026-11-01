@@ -31,6 +31,8 @@ type Doc struct {
 	Description   string
 	UpstreamNames []string
 	UpstreamTags  []string
+	// Keywords 为 AI 生成的中文简介、中英文关键词与适用场景，可为空。
+	Keywords string
 }
 
 // Hit describes a matching document. DocIndex points into the docs passed to
@@ -56,8 +58,10 @@ type indexedDoc struct {
 	origTokens map[string]struct{}
 	descTokens map[string]struct{}
 	upTokens   map[string]struct{}
+	kwTokens   map[string]struct{}
 	nameRaw    string
 	descRaw    string
+	kwRaw      string
 }
 
 // Index is immutable after Build and safe for concurrent searches.
@@ -101,13 +105,16 @@ func Build(docs []Doc) *Index {
 				}
 			}
 		}
+		keywordsValue := truncateRunes(doc.Keywords, maxDescriptionRunes)
 		ix.indexed = append(ix.indexed, indexedDoc{
 			nameTokens: name,
 			origTokens: orig,
 			descTokens: desc,
 			upTokens:   up,
+			kwTokens:   toTokenSet(tokenize(keywordsValue, descTokenLimit), 0),
 			nameRaw:    normalizeQuery(nameValue),
 			descRaw:    strings.ToLower(descriptionValue),
+			kwRaw:      strings.ToLower(keywordsValue),
 		})
 		unique := make(map[string]struct{}, len(name)+len(orig)+len(up))
 		for _, field := range []map[string]struct{}{name, orig, up} {
@@ -124,6 +131,7 @@ func Build(docs []Doc) *Index {
 		safeDocs[index].OriginalName = ""
 		safeDocs[index].Description = ""
 		safeDocs[index].UpstreamTags = nil
+		safeDocs[index].Keywords = ""
 	}
 	return ix
 }
@@ -194,6 +202,7 @@ func (ix *Index) fieldBest(doc indexedDoc, term string) float64 {
 		matchScore(doc.nameTokens, term, 3.0),
 		matchScore(doc.origTokens, term, 2.5),
 		matchScore(doc.upTokens, term, 2.0),
+		matchScore(doc.kwTokens, term, 2.0),
 		matchScore(doc.descTokens, term, 1.0),
 	)
 }
@@ -224,7 +233,7 @@ func (ix *Index) substringFallback(query string, limit, offset int) Result {
 	hits := make([]Hit, 0)
 	for index := range ix.docs {
 		indexed := ix.indexed[index]
-		if strings.Contains(indexed.nameRaw, query) || strings.Contains(indexed.descRaw, query) {
+		if strings.Contains(indexed.nameRaw, query) || strings.Contains(indexed.descRaw, query) || strings.Contains(indexed.kwRaw, query) {
 			hits = append(hits, Hit{DocIndex: index})
 		}
 	}

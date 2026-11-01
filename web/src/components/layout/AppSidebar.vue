@@ -123,6 +123,7 @@ import {
   ChevronDownIcon,
   PaperclipIcon,
   TaskIcon,
+  ChatIcon,
 } from '@/icons'
 import { useSidebar } from '@/composables/useSidebar'
 import { useRuntimeCapability } from '@/composables/useRuntimeCapability'
@@ -159,6 +160,7 @@ const allMenuGroups: MenuGroup[] = [
     items: [
       { icon: PlugInIcon, name: '上游 MCP', path: '/upstreams' },
       { icon: TaskIcon, name: 'MCP 检测', path: '/mcp-check' },
+      { icon: ChatIcon, name: '智能发现', path: '/smart-discovery' },
       { icon: TableIcon, name: '工具目录', path: '/tools' },
       { icon: ListIcon, name: '规则管理', path: '/rules' },
       { icon: SendIcon, name: '出站代理', path: '/outbound-proxies' },

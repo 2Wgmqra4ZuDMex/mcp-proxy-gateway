@@ -195,6 +195,15 @@ const router = createRouter({
       },
     },
     {
+      path: '/smart-discovery',
+      name: 'SmartDiscovery',
+      component: () => import('../views/SmartDiscoveryView.vue'),
+      meta: {
+        title: '智能发现',
+        requiresAuth: true,
+      },
+    },
+    {
       path: '/scripts',
       name: 'Scripts',
       component: () => import('../views/ScriptsView.vue'),

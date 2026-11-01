@@ -150,6 +150,7 @@ type Service struct {
 	toolSetCache        map[string]cachedToolSet
 	toolSetCacheVersion uint64
 	toolSetCacheMu      sync.RWMutex
+	searchKeywordsFn    func(originalName, description string) string
 	// routingStrategy 为同名工具多来源时的调用选择策略。
 	routingStrategy        domain.ToolRoutingStrategy
 	routingMu              sync.RWMutex
@@ -194,6 +195,17 @@ func (s *Service) SetUpstreamAccessAuthorizer(authorizer UpstreamAccessAuthorize
 func (s *Service) SetToolAccessAuthorizer(authorizer ToolAccessAuthorizer) *Service {
 	s.toolAccessAuthorizer = authorizer
 	return s
+}
+
+// SetSearchKeywords 注入智能模式检索的增强文本来源（AI 生成的中文简介与关键词）。
+// 仅在装配阶段调用；增强文本变化后由调用方触发 InvalidateToolSetCache 重建索引。
+func (s *Service) SetSearchKeywords(fn func(originalName, description string) string) *Service {
+	s.searchKeywordsFn = fn
+	return s
+}
+
+func (s *Service) searchKeywords() func(originalName, description string) string {
+	return s.searchKeywordsFn
 }
 
 const (
@@ -537,13 +549,17 @@ func (s *Service) BuildToolSearchSet(ctx context.Context, apiKeyID string) ([]do
 
 	docs := make([]toolsearch.Doc, 0, len(discoveries))
 	for _, discovery := range discoveries {
-		docs = append(docs, toolsearch.Doc{
+		doc := toolsearch.Doc{
 			Name:          discovery.Tool.Name,
 			OriginalName:  discovery.Tool.OriginalName,
 			Description:   discovery.Tool.Description,
 			UpstreamNames: discovery.UpstreamNames,
 			UpstreamTags:  discovery.UpstreamTags,
-		})
+		}
+		if keywords := s.searchKeywords(); keywords != nil {
+			doc.Keywords = keywords(discovery.Tool.OriginalName, discovery.Tool.Description)
+		}
+		docs = append(docs, doc)
 	}
 	index := toolsearch.Build(docs)
 

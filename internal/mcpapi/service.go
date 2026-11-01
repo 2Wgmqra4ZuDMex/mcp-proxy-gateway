@@ -46,10 +46,11 @@ const (
 type Service struct {
 	mu sync.RWMutex
 
-	agg    domain.Aggregation_Service
-	full   *FullModeHandler
-	smart  *SmartModeHandler
-	logger *slog.Logger
+	agg       domain.Aggregation_Service
+	full      *FullModeHandler
+	smart     *SmartModeHandler
+	assistant SmartAssistant
+	logger    *slog.Logger
 }
 
 func NewService(agg domain.Aggregation_Service, discoveryLimit int, logger *slog.Logger) *Service {
@@ -74,6 +75,24 @@ func (s *Service) SetDiscoveryLimit(limit int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.smart = NewSmartModeHandler(s.agg, limit)
+	s.smart.assistant = s.assistant
+}
+
+// SetAssistant 注入智能模式的 AI 辅助（挑选工具、服务清单）。
+func (s *Service) SetAssistant(assistant SmartAssistant) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.assistant = assistant
+	s.smart.assistant = assistant
+}
+
+// PreviewSearch 供管理台试搜：返回关键词检索与 AI 挑选两种结果。
+// aiEnabled 为 false 表示未开启 AI 挑选；aiErr 为 AI 失败原因；err 表示关键词检索失败。
+func (s *Service) PreviewSearch(ctx context.Context, apiKeyID, query string) (keyword SearchPage, ai *SearchPage, aiEnabled bool, aiErr error, err error) {
+	_, smart := s.snapshot()
+	aiEnabled = smart.assistant != nil && smart.assistant.RerankEnabled()
+	keyword, ai, aiErr, err = smart.SearchToolsDetailed(ctx, apiKeyID, query, "", 0, aiEnabled)
+	return keyword, ai, aiEnabled, aiErr, err
 }
 func (s *Service) BuildServer(ctx context.Context, apiKeyID string, mode string) (*mcp.Server, error) {
 	return s.BuildServerWithSource(ctx, apiKeyID, mode, "api")
@@ -85,10 +104,13 @@ func (s *Service) BuildServer(ctx context.Context, apiKeyID string, mode string)
 func (s *Service) BuildServerWithSource(ctx context.Context, apiKeyID, mode, source string) (*mcp.Server, error) {
 	full, smart := s.snapshot()
 	s.logger.Debug("构建对外 MCP 服务端", "apiKeyID", apiKeyID, "mode", mode, "source", source)
-	srv := mcp.NewServer(
-		&mcp.Implementation{Name: apiServerName, Version: apiServerVersion},
-		&mcp.ServerOptions{Capabilities: &mcp.ServerCapabilities{Tools: &mcp.ToolCapabilities{ListChanged: true}}},
-	)
+	opts := &mcp.ServerOptions{Capabilities: &mcp.ServerCapabilities{Tools: &mcp.ToolCapabilities{ListChanged: true}}}
+	overview := ""
+	if mode != ModeFull {
+		overview = smart.Overview(ctx, apiKeyID)
+		opts.Instructions = overview
+	}
+	srv := mcp.NewServer(&mcp.Implementation{Name: apiServerName, Version: apiServerVersion}, opts)
 
 	if mode == ModeFull {
 		if err := s.registerFullTools(ctx, srv, apiKeyID, source, full); err != nil {
@@ -98,7 +120,7 @@ func (s *Service) BuildServerWithSource(ctx context.Context, apiKeyID, mode, sou
 		return srv, nil
 	}
 
-	s.registerGatewayTools(srv, apiKeyID, source, smart)
+	s.registerGatewayTools(srv, apiKeyID, source, smart, overview)
 	return srv, nil
 }
 
@@ -141,8 +163,8 @@ func callArguments(req *mcp.CallToolRequest) json.RawMessage {
 //
 // 各网关工具的发现型结果（工具摘要/分页/单工具定义）以 JSON 文本 content 回传；call_tool
 // 直接透传聚合服务返回的 MCP 调用结果（Req 10.3）。
-func (s *Service) registerGatewayTools(srv *mcp.Server, apiKeyID, source string, smart *SmartModeHandler) {
-	for _, gt := range smart.GatewayTools() {
+func (s *Service) registerGatewayTools(srv *mcp.Server, apiKeyID, source string, smart *SmartModeHandler, overview string) {
+	for _, gt := range smart.GatewayToolsWithOverview(overview) {
 		srv.AddTool(gt, s.gatewayHandler(apiKeyID, source, gt.Name, smart))
 	}
 }

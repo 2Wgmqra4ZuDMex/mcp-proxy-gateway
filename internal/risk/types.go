@@ -98,20 +98,24 @@ const (
 )
 
 type Provider struct {
-	ID             string    `json:"id"`
-	Name           string    `json:"name"`
-	BaseURL        string    `json:"baseUrl"`
-	APIStyle       APIStyle  `json:"apiStyle"`
-	Model          string    `json:"model"`
-	APIKey         string    `json:"apiKey"`
-	Enabled        bool      `json:"enabled"`
-	Active         bool      `json:"active"`
-	TimeoutS       int       `json:"timeoutS"`
-	BatchSize      int       `json:"batchSize"`
-	MaxConcurrency int       `json:"maxConcurrency"`
-	AutoAssess     bool      `json:"autoAssess"`
-	CreatedAt      time.Time `json:"createdAt"`
-	UpdatedAt      time.Time `json:"updatedAt"`
+	ID             string   `json:"id"`
+	Name           string   `json:"name"`
+	BaseURL        string   `json:"baseUrl"`
+	APIStyle       APIStyle `json:"apiStyle"`
+	Model          string   `json:"model"`
+	APIKey         string   `json:"apiKey"`
+	Enabled        bool     `json:"enabled"`
+	Active         bool     `json:"active"`
+	TimeoutS       int      `json:"timeoutS"`
+	BatchSize      int      `json:"batchSize"`
+	MaxConcurrency int      `json:"maxConcurrency"`
+	AutoAssess     bool     `json:"autoAssess"`
+	// 以下为智能发现（工具说明增强 / AI 挑选工具）复用本 Provider 时的配置；omitempty 保持旧备份格式不变。
+	ProxyID       string    `json:"proxyId,omitempty"`
+	EnrichEnabled bool      `json:"enrichEnabled,omitempty"`
+	RerankEnabled bool      `json:"rerankEnabled,omitempty"`
+	CreatedAt     time.Time `json:"createdAt"`
+	UpdatedAt     time.Time `json:"updatedAt"`
 }
 
 // ProviderTestResult is the observable result of one real request to an AI

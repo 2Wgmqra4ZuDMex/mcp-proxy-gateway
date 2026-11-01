@@ -196,6 +196,9 @@ type aiProviderModel struct {
 	BatchSize      int       `gorm:"column:batch_size;type:integer;not null;default:10"`
 	MaxConcurrency int       `gorm:"column:max_concurrency;type:integer;not null;default:1"`
 	AutoAssess     bool      `gorm:"column:auto_assess;type:boolean;not null;default:false"`
+	ProxyID        string    `gorm:"column:proxy_id;type:varchar(64);not null;default:''"`
+	EnrichEnabled  bool      `gorm:"column:discovery_enrich;type:boolean;not null;default:false"`
+	RerankEnabled  bool      `gorm:"column:discovery_rerank;type:boolean;not null;default:false"`
 	CreatedAt      time.Time `gorm:"column:created_at;type:timestamptz;not null;default:now();autoCreateTime:false"`
 	UpdatedAt      time.Time `gorm:"column:updated_at;type:timestamptz;not null;default:now();autoUpdateTime:false"`
 }

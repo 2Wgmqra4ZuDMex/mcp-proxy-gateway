@@ -34,7 +34,9 @@ func (r *AIProviderRepo) Update(ctx context.Context, p risk.Provider) (risk.Prov
 		"name": p.Name, "base_url": p.BaseURL, "api_style": p.APIStyle, "model": p.Model,
 		"api_key": p.APIKey, "enabled": p.Enabled,
 		"timeout_s": p.TimeoutS, "batch_size": p.BatchSize, "max_concurrency": p.MaxConcurrency,
-		"auto_assess": p.AutoAssess, "updated_at": time.Now().UTC(),
+		"auto_assess": p.AutoAssess, "proxy_id": p.ProxyID,
+		"discovery_enrich": p.EnrichEnabled, "discovery_rerank": p.RerankEnabled,
+		"updated_at": time.Now().UTC(),
 	}
 	if !p.Enabled {
 		updates["active"] = false
@@ -120,12 +122,16 @@ func providerToModel(p risk.Provider) aiProviderModel {
 	return aiProviderModel{ID: p.ID, Name: p.Name, BaseURL: p.BaseURL, APIStyle: string(p.APIStyle), Model: p.Model,
 		APIKey: p.APIKey, Enabled: p.Enabled, Active: p.Active,
 		TimeoutS: p.TimeoutS, BatchSize: p.BatchSize,
-		MaxConcurrency: p.MaxConcurrency, AutoAssess: p.AutoAssess, CreatedAt: p.CreatedAt, UpdatedAt: p.UpdatedAt}
+		MaxConcurrency: p.MaxConcurrency, AutoAssess: p.AutoAssess,
+		ProxyID: p.ProxyID, EnrichEnabled: p.EnrichEnabled, RerankEnabled: p.RerankEnabled,
+		CreatedAt: p.CreatedAt, UpdatedAt: p.UpdatedAt}
 }
 
 func modelToProvider(m aiProviderModel) risk.Provider {
 	return risk.Provider{ID: m.ID, Name: m.Name, BaseURL: m.BaseURL, APIStyle: risk.APIStyle(m.APIStyle), Model: m.Model,
 		APIKey: m.APIKey, Enabled: m.Enabled, Active: m.Active,
 		TimeoutS: m.TimeoutS, BatchSize: m.BatchSize,
-		MaxConcurrency: m.MaxConcurrency, AutoAssess: m.AutoAssess, CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt}
+		MaxConcurrency: m.MaxConcurrency, AutoAssess: m.AutoAssess,
+		ProxyID: m.ProxyID, EnrichEnabled: m.EnrichEnabled, RerankEnabled: m.RerankEnabled,
+		CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt}
 }

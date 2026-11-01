@@ -132,6 +132,7 @@ func AutoMigrate(ctx context.Context, db *gorm.DB, logger *slog.Logger) error {
 		&apiKeyUpstreamAccessModel{},
 		&apiKeyToolAccessModel{},
 		&outboundProxyModel{},
+		&toolEnrichmentModel{},
 		&toolCacheModel{},
 		&auditLogModel{},
 		&securityEventModel{},

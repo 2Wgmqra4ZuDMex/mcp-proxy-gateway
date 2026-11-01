@@ -23,6 +23,7 @@ import (
 	"github.com/myGithub/mcp-proxy-gateway/internal/aggregation"
 	"github.com/myGithub/mcp-proxy-gateway/internal/audit"
 	"github.com/myGithub/mcp-proxy-gateway/internal/config"
+	"github.com/myGithub/mcp-proxy-gateway/internal/discovery"
 	"github.com/myGithub/mcp-proxy-gateway/internal/health"
 	"github.com/myGithub/mcp-proxy-gateway/internal/manager"
 	"github.com/myGithub/mcp-proxy-gateway/internal/mcpapi"
@@ -90,6 +91,7 @@ type App struct {
 	mcpService    *mcpapi.Service
 	mcpEndpoints  *mcpapi.Endpoints
 	agg           *aggregation.Service
+	discovery     *discovery.Service
 	securityGuard *security.Guard
 	mgr           *manager.Manager
 	dialer        *sessionDialer

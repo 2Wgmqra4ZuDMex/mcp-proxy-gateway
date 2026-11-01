@@ -13,6 +13,7 @@ import (
 	"github.com/myGithub/mcp-proxy-gateway/internal/backup"
 	"github.com/myGithub/mcp-proxy-gateway/internal/cache"
 	"github.com/myGithub/mcp-proxy-gateway/internal/config"
+	"github.com/myGithub/mcp-proxy-gateway/internal/discovery"
 	"github.com/myGithub/mcp-proxy-gateway/internal/domain"
 	"github.com/myGithub/mcp-proxy-gateway/internal/health"
 	"github.com/myGithub/mcp-proxy-gateway/internal/httpapi"
@@ -138,6 +139,19 @@ func (a *App) build(envCfg config.EnvConfig) error {
 	agg.SetRoutingStrategy(yamlCfg.Aggregation.ToolRoutingStrategy)
 	agg.SetQuotaManager(aggregation.NewQuotaManager(aggregation.NewRedisQuotaCounter(a.rdb), a.logger))
 	a.agg = agg
+
+	// --- 智能发现：AI 接口复用 ai_provider；工具说明增强并入检索索引 ---
+	discoverySvc := discovery.New(repos.AIProvider, repos.ToolEnrichment, outboundSvc.Resolve, a.logger)
+	if err := discoverySvc.Load(context.Background()); err != nil {
+		a.logger.Warn("加载智能发现配置失败", "error", err)
+	}
+	discoverySvc.SetToolSource(func(ctx context.Context) ([]domain.ToolDiscovery, error) {
+		return agg.BuildToolDiscoveries(ctx, "")
+	})
+	discoverySvc.SetInvalidate(agg.InvalidateToolSetCache)
+	agg.SetSearchKeywords(discoverySvc.ToolKeywords)
+	a.discovery = discoverySvc
+
 	// 工具列表写入经装饰器统一失效聚合集缓存；聚合服务自身仍使用原始缓存，
 	// 以保持依赖方向单一。
 	invalidatingToolCache := aggregation.NewInvalidatingCache(toolCache, agg)
@@ -191,7 +205,7 @@ func (a *App) build(envCfg config.EnvConfig) error {
 	a.syncTimeout = syncTimeout
 	a.syncer = syncsvc.NewPeriodicSyncer(fetcher, invalidatingToolCache, mgr, syncTimeout, a.logger)
 	refresher := syncsvc.NewRefresher(fetcher, invalidatingToolCache, syncTimeout, a.logger)
-	catalogObserver := riskCatalogObserver{repo: repos.ToolRisk, invalidate: agg.InvalidateToolSetCache}
+	catalogObserver := riskCatalogObserver{repo: repos.ToolRisk, invalidate: agg.InvalidateToolSetCache, onChange: discoverySvc.ToolsChanged}
 	a.syncer.SetObserver(catalogObserver)
 	refresher.SetObserver(catalogObserver)
 	a.scheduler = syncsvc.NewScheduler()
@@ -231,6 +245,7 @@ func (a *App) build(envCfg config.EnvConfig) error {
 
 	// --- 对外 MCP API 服务（MCP_API_Service）：按模式构建 server，多传输暴露 ---
 	mcpService := mcpapi.NewService(agg, yamlCfg.MCPAPI.SmartDiscoveryLimit, a.logger)
+	mcpService.SetAssistant(discoverySvc)
 	a.mcpService = mcpService
 	mcpEndpoints := mcpapi.NewEndpoints(mcpService, resolveAPIKeyID, a.logger)
 	mcpEndpoints.SetRequestBodyLimitMiB(yamlCfg.MCPAPI.RequestBodyLimitMiB)
@@ -268,6 +283,8 @@ func (a *App) build(envCfg config.EnvConfig) error {
 		APIKeyUpstreams: upstreamAccessMgr,
 		APIKeyTools:     toolAccessMgr,
 		OutboundProxies: outboundSvc,
+		SmartDiscovery:  discoverySvc,
+		SmartPreview:    mcpService,
 		ACLStore:        repos.ACL,
 		RateLimitStore:  repos.APIKey,
 		ToolRiskStore:   repos.ToolRisk,

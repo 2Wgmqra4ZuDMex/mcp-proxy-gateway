@@ -93,6 +93,8 @@ type riskProfileReaderAdapter struct {
 type riskCatalogObserver struct {
 	repo       *store.ToolRiskRepo
 	invalidate func()
+	// onChange 在工具目录更新后调用（智能发现据此为新工具补生成说明）。
+	onChange func()
 }
 
 func (o riskCatalogObserver) ToolsReplaced(ctx context.Context, upstreamID string, tools []domain.ToolDef) error {
@@ -102,6 +104,9 @@ func (o riskCatalogObserver) ToolsReplaced(ctx context.Context, upstreamID strin
 	}
 	if o.invalidate != nil {
 		o.invalidate()
+	}
+	if o.onChange != nil {
+		o.onChange()
 	}
 	return nil
 }

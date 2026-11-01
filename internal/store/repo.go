@@ -54,8 +54,10 @@ type Repositories struct {
 	Audit *AuditRepo
 	// Security 为安全事件与封禁记录仓储。
 	Security *SecurityRepo
-	// AIProvider 为 OpenAI-compatible 风险评级 Provider 仓储。
+	// AIProvider 为 OpenAI-compatible Provider 仓储（智能发现复用）。
 	AIProvider *AIProviderRepo
+	// ToolEnrichment 为 AI 生成的工具检索元数据仓储。
+	ToolEnrichment *ToolEnrichmentRepo
 	// ToolRisk 为按来源工具身份保存的风险目录仓储。
 	ToolRisk *ToolRiskRepo
 	// RiskJob 为持久化评级任务仓储。
@@ -81,6 +83,7 @@ func NewRepositories(db *gorm.DB) *Repositories {
 		Audit:                NewAuditRepo(db),
 		Security:             NewSecurityRepo(db),
 		AIProvider:           NewAIProviderRepo(db),
+		ToolEnrichment:       NewToolEnrichmentRepo(db),
 		ToolRisk:             NewToolRiskRepo(db),
 		RiskJob:              NewRiskJobRepo(db),
 	}

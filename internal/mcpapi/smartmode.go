@@ -3,12 +3,14 @@ package mcpapi
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/myGithub/mcp-proxy-gateway/internal/discovery"
 	"github.com/myGithub/mcp-proxy-gateway/internal/domain"
 	"github.com/myGithub/mcp-proxy-gateway/internal/toolsearch"
 )
@@ -109,6 +111,15 @@ type SearchPage struct {
 	NextCursor  string        `json:"nextCursor,omitempty"`
 	Suggestions []string      `json:"suggestions"`
 	Hint        string        `json:"hint,omitempty"`
+	// RankedBy 为 "ai" 时表示结果由 AI 从候选中挑选并按建议调用顺序排列。
+	RankedBy string `json:"rankedBy,omitempty"`
+}
+
+// SmartAssistant 为智能模式的 AI 辅助能力（可选）：挑选工具与服务清单。
+type SmartAssistant interface {
+	RerankEnabled() bool
+	Rerank(ctx context.Context, query string, candidates []discovery.Candidate, limit int) (discovery.RerankResult, error)
+	ServiceOverview(discoveries []domain.ToolDiscovery) string
 }
 
 // ToolBatch is returned only for get_tool's names form. The existing name form
@@ -121,10 +132,17 @@ type ToolBatch struct {
 const (
 	searchHintWithSuggestions = "未匹配到工具。可尝试上述关键词，或调用 list_tools 查看有哪些上游服务。"
 	searchHintBrowseTools     = "未匹配到工具。请调用 list_tools 查看可用上游服务和工具。"
-	descriptionSummaryLimit   = 240
-	maxBatchToolNames         = 20
-	maxUpstreamFilterRunes    = 256
-	maxCursorBytes            = 20
+	searchHintAIEmpty         = "AI 认为没有完全符合需求的工具，以下为关键词检索结果。"
+	// 可见工具不超过该数量时，全部交给 AI 挑选；否则先用关键词粗筛。
+	aiCandidateAllLimit     = 150
+	aiCandidatePrefetch     = 40
+	defaultAIPickLimit      = 5
+	maxAIPickLimit          = 10
+	maxOverviewInDesc       = 2000
+	descriptionSummaryLimit = 240
+	maxBatchToolNames       = 20
+	maxUpstreamFilterRunes  = 256
+	maxCursorBytes          = 20
 )
 
 // toolDiscoverySource is an optional, cached source-label capability. The
@@ -162,7 +180,8 @@ type smartToolSources struct {
 // 该类型不持有任何传输状态，可被多传输端点共享；可见性始终以 BuildToolSet/InvokeTool 为
 // 唯一来源，保证智能模式与全量模式的可见性一致。
 type SmartModeHandler struct {
-	agg domain.Aggregation_Service
+	agg       domain.Aggregation_Service
+	assistant SmartAssistant
 	// discoveryLimit 为工具发现返回数默认值（来自配置 smart_discovery_limit）。
 	// 构造时已保证落在 [minDiscoveryLimit, maxDiscoveryLimit] 内。
 	discoveryLimit int
@@ -184,6 +203,16 @@ func NewSmartModeHandler(agg domain.Aggregation_Service, discoveryLimit int) *Sm
 // 智能模式 tools/list 只暴露这四个工具，客户端上下文仅占用四个工具定义，而非全部聚合工具。
 // 始终返回固定顺序的非 nil 切片。
 func (h *SmartModeHandler) GatewayTools() []*mcp.Tool {
+	return h.GatewayToolsWithOverview("")
+}
+
+// GatewayToolsWithOverview 在 search_tools 的描述后附上服务清单，
+// 让不读取 instructions 的客户端也知道网关里有哪些能力。
+func (h *SmartModeHandler) GatewayToolsWithOverview(overview string) []*mcp.Tool {
+	searchDescription := GatewayToolSearchToolsDescription
+	if overview = strings.TrimSpace(overview); overview != "" {
+		searchDescription += "\n\n" + truncateOverview(overview, maxOverviewInDesc)
+	}
 	return []*mcp.Tool{
 		{
 			Name:        GatewayToolListTools,
@@ -192,7 +221,7 @@ func (h *SmartModeHandler) GatewayTools() []*mcp.Tool {
 		},
 		{
 			Name:        GatewayToolSearchTools,
-			Description: GatewayToolSearchToolsDescription,
+			Description: searchDescription,
 			InputSchema: searchToolsInputSchema,
 		},
 		{
@@ -264,18 +293,56 @@ func (h *SmartModeHandler) ListTools(ctx context.Context, apiKeyID, cursor, upst
 //
 // 返回的 Tools 和 Suggestions 始终非 nil。
 func (h *SmartModeHandler) SearchTools(ctx context.Context, apiKeyID, query, cursor string, limit int) (SearchPage, error) {
+	useAI := cursor == "" && h.assistant != nil && h.assistant.RerankEnabled()
+	keyword, ai, aiErr, err := h.SearchToolsDetailed(ctx, apiKeyID, query, cursor, limit, useAI)
+	if err != nil {
+		return SearchPage{}, err
+	}
+	if aiErr != nil {
+		slog.Default().Warn("AI 挑选工具失败，已回退关键词检索", "error", aiErr)
+	}
+	if ai != nil {
+		if len(ai.Tools) > 0 {
+			return *ai, nil
+		}
+		if len(keyword.Tools) > 0 {
+			keyword.Hint = searchHintAIEmpty
+		}
+	}
+	return keyword, nil
+}
+
+// SearchToolsDetailed 返回关键词检索结果；useAI 为 true 时另返回 AI 挑选结果。
+// AI 失败时 ai 为 nil、aiErr 给出原因，关键词结果仍可用；err 仅表示关键词检索本身失败。
+// 管理台试搜用它对比两种结果。
+func (h *SmartModeHandler) SearchToolsDetailed(ctx context.Context, apiKeyID, query, cursor string, limit int, useAI bool) (SearchPage, *SearchPage, error, error) {
+	page, tools, sources, index, err := h.keywordSearch(ctx, apiKeyID, query, cursor, limit)
+	if err != nil {
+		return SearchPage{}, nil, nil, err
+	}
+	if !useAI || h.assistant == nil || strings.TrimSpace(query) == "" {
+		return page, nil, nil, nil
+	}
+	ai, aiErr := h.aiSearch(ctx, query, limit, tools, sources, index)
+	if aiErr != nil {
+		return page, nil, aiErr, nil
+	}
+	return page, &ai, nil, nil
+}
+
+func (h *SmartModeHandler) keywordSearch(ctx context.Context, apiKeyID, query, cursor string, limit int) (SearchPage, []domain.ToolDef, map[string]smartToolSources, *toolsearch.Index, error) {
 	if toolsearch.QueryTooLong(query) {
-		return SearchPage{}, domain.NewValidationError("网关工具入参非法", map[string]string{
+		return SearchPage{}, nil, nil, nil, domain.NewValidationError("网关工具入参非法", map[string]string{
 			"query": "查询不能超过 512 个字符",
 		})
 	}
 	offset, err := parseCursor(cursor)
 	if err != nil {
-		return SearchPage{}, err
+		return SearchPage{}, nil, nil, nil, err
 	}
 	tools, sources, index, err := h.loadSearchDiscovery(ctx, apiKeyID)
 	if err != nil {
-		return SearchPage{}, err
+		return SearchPage{}, nil, nil, nil, err
 	}
 	result := index.Search(query, h.resolveLimit(limit), offset)
 	page := SearchPage{
@@ -284,7 +351,7 @@ func (h *SmartModeHandler) SearchTools(ctx context.Context, apiKeyID, query, cur
 	}
 	for _, hit := range result.Hits {
 		if hit.DocIndex < 0 || hit.DocIndex >= len(tools) {
-			return SearchPage{}, domain.NewError(domain.CodeInternal, "工具检索索引与可见工具集合不一致")
+			return SearchPage{}, nil, nil, nil, domain.NewError(domain.CodeInternal, "工具检索索引与可见工具集合不一致")
 		}
 		tool := tools[hit.DocIndex]
 		page.Tools = append(page.Tools, toToolSummary(tool, sources[tool.Name]))
@@ -299,7 +366,75 @@ func (h *SmartModeHandler) SearchTools(ctx context.Context, apiKeyID, query, cur
 			page.Hint = searchHintBrowseTools
 		}
 	}
+	return page, tools, sources, index, nil
+}
+
+// aiSearch 让 AI 从候选中挑选工具。可见工具较少时全部作为候选，较多时先用关键词粗筛。
+func (h *SmartModeHandler) aiSearch(ctx context.Context, query string, limit int, tools []domain.ToolDef, sources map[string]smartToolSources, index *toolsearch.Index) (SearchPage, error) {
+	candidates := tools
+	if len(tools) > aiCandidateAllLimit {
+		result := index.Search(query, aiCandidatePrefetch, 0)
+		candidates = make([]domain.ToolDef, 0, len(result.Hits))
+		for _, hit := range result.Hits {
+			if hit.DocIndex >= 0 && hit.DocIndex < len(tools) {
+				candidates = append(candidates, tools[hit.DocIndex])
+			}
+		}
+	}
+	page := SearchPage{Tools: []ToolSummary{}, Suggestions: []string{}, RankedBy: "ai"}
+	if len(candidates) == 0 {
+		return page, nil
+	}
+	byName := make(map[string]domain.ToolDef, len(candidates))
+	list := make([]discovery.Candidate, 0, len(candidates))
+	for _, tool := range candidates {
+		byName[tool.Name] = tool
+		service := ""
+		if names := sources[tool.Name].names; len(names) > 0 {
+			service = discovery.ServiceName(names[0])
+		}
+		list = append(list, discovery.Candidate{Name: tool.Name, OriginalName: tool.OriginalName, Description: tool.Description, Service: service})
+	}
+	pick := defaultAIPickLimit
+	if limit > 0 && limit < pick {
+		pick = limit
+	}
+	pick = min(pick, maxAIPickLimit)
+	result, err := h.assistant.Rerank(ctx, query, list, pick)
+	if err != nil {
+		return SearchPage{}, err
+	}
+	for _, name := range result.Names {
+		if tool, ok := byName[name]; ok {
+			page.Tools = append(page.Tools, toToolSummary(tool, sources[name]))
+		}
+	}
+	page.Hint = result.Note
 	return page, nil
+}
+
+// Overview 返回该 API Key 可见服务的清单；未注入 AI 辅助或读取失败时返回空串。
+func (h *SmartModeHandler) Overview(ctx context.Context, apiKeyID string) string {
+	if h.assistant == nil {
+		return ""
+	}
+	tools, sources, err := h.loadDiscovery(ctx, apiKeyID)
+	if err != nil {
+		return ""
+	}
+	discoveries := make([]domain.ToolDiscovery, 0, len(tools))
+	for _, tool := range tools {
+		discoveries = append(discoveries, domain.ToolDiscovery{Tool: tool, UpstreamNames: sources[tool.Name].names})
+	}
+	return h.assistant.ServiceOverview(discoveries)
+}
+
+func truncateOverview(value string, limit int) string {
+	r := []rune(value)
+	if len(r) <= limit {
+		return value
+	}
+	return string(r[:limit]) + "…"
 }
 
 // GetTool 实现网关工具 get_tool：返回单个可见工具的完整定义（含 inputSchema，Req 11.7）。

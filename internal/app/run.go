@@ -184,6 +184,10 @@ func (a *App) startBackground(ctx context.Context) {
 		}
 	})
 
+	if a.discovery != nil {
+		a.discovery.Start(ctx)
+	}
+
 	// 启动后为缺失工具缓存的已启用上游补拉一次（如刚导入备份），无需等待周期同步或手动刷新。
 	a.runBackgroundStep("补拉缺失的工具缓存", func() {
 		go func() {
@@ -195,6 +199,10 @@ func (a *App) startBackground(ctx context.Context) {
 			runCtx, cancel := context.WithTimeout(ctx, startupCacheFillTimeout(a.syncTimeout))
 			defer cancel()
 			a.syncer.EnsureCachedForEnabled(runCtx)
+			// 工具缓存补齐后，为尚未生成说明的工具补生成（仅在开启工具说明增强时生效）。
+			if a.discovery != nil {
+				a.discovery.ToolsChanged()
+			}
 		}()
 	})
 
