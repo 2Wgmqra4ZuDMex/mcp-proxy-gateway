@@ -34,6 +34,7 @@ func NewDB(ctx context.Context, dsn string) (*gorm.DB, error) {
 	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{
 		DisableForeignKeyConstraintWhenMigrating: true,
 		TranslateError:                           true,
+		Logger:                                   newSQLLogger(),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("打开 PostgreSQL 连接失败：%w", err)
