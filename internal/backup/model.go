@@ -63,4 +63,8 @@ type APIKeyEntry struct {
 	ACLCIDRs []string `json:"aclCidrs"`
 	// UpstreamIDs 为 selected 模式下允许访问的上游标识。
 	UpstreamIDs []string `json:"upstreamIds,omitempty"`
+	// ToolAccessMode 为工具白名单模式；仅在 selected 时写出，未限制的 Key 保持与原版备份格式一致。
+	ToolAccessMode string `json:"toolAccessMode,omitempty"`
+	// ToolNames 为 selected 模式下允许暴露的对外工具名。
+	ToolNames []string `json:"toolNames,omitempty"`
 }

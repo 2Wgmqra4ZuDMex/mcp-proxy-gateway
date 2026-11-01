@@ -265,6 +265,34 @@ export async function updateAPIKeyUpstreamAccess(
   }
 }
 
+/** API Key 工具白名单：selected 时只暴露 toolNames 中的对外工具名。 */
+export interface APIKeyToolAccess {
+  mode: UpstreamAccessMode
+  toolNames: string[]
+}
+
+export async function getAPIKeyToolAccess(id: string): Promise<APIKeyToolAccess> {
+  const res = await request.get<APIKeyToolAccess>(`/apikeys/${encodeURIComponent(id)}/tool-access`)
+  return {
+    mode: res.data?.mode ?? 'all',
+    toolNames: res.data?.toolNames ?? [],
+  }
+}
+
+export async function updateAPIKeyToolAccess(
+  id: string,
+  payload: APIKeyToolAccess,
+): Promise<APIKeyToolAccess> {
+  const res = await request.put<APIKeyToolAccess>(
+    `/apikeys/${encodeURIComponent(id)}/tool-access`,
+    payload,
+  )
+  return {
+    mode: res.data?.mode ?? 'all',
+    toolNames: res.data?.toolNames ?? [],
+  }
+}
+
 /** 删除某个 API Key 并级联清理其屏蔽规则与 ACL（Req 12.2）。 */
 export async function deleteAPIKey(id: string): Promise<void> {
   await request.delete(`/apikeys/${encodeURIComponent(id)}`)

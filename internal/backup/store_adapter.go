@@ -81,6 +81,14 @@ func (a *StoreAdapter) ExportBusiness(ctx context.Context) (BusinessConfig, erro
 			return BusinessConfig{}, err
 		}
 		entry.UpstreamIDs = append(entry.UpstreamIDs, access.UpstreamIDs...)
+		toolAccess, err := a.repos.APIKeyToolAccess.Get(ctx, k.ID)
+		if err != nil {
+			return BusinessConfig{}, err
+		}
+		if toolAccess.Mode == "selected" {
+			entry.ToolAccessMode = toolAccess.Mode
+			entry.ToolNames = append([]string{}, toolAccess.ToolNames...)
+		}
 		for _, fr := range filterRows {
 			entry.FilterRules = append(entry.FilterRules, fr.FilterRule)
 		}
@@ -226,6 +234,11 @@ func (a *StoreAdapter) importBusiness(ctx context.Context, bc BusinessConfig) er
 		mappedAccessIDs := remapIDs(ke.UpstreamIDs, upstreamIDMap)
 		if err := a.repos.APIKeyUpstreamAccess.Replace(ctx, created.ID, meta.UpstreamAccessMode, mappedAccessIDs); err != nil {
 			return err
+		}
+		if ke.ToolAccessMode == "selected" {
+			if err := a.repos.APIKeyToolAccess.Replace(ctx, created.ID, ke.ToolAccessMode, ke.ToolNames); err != nil {
+				return err
+			}
 		}
 		for _, fr := range ke.FilterRules {
 			row := store.FilterAPIKeyRow{FilterRule: fr, APIKeyID: created.ID}

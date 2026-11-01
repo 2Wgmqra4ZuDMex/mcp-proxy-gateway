@@ -112,6 +112,12 @@ type UpstreamAccessAuthorizer interface {
 	AuthorizeUpstream(ctx context.Context, apiKeyID, upstreamID string) error
 }
 
+// ToolAccessAuthorizer 提供 API Key 的对外工具白名单；restricted 为 false 表示不限制。
+// 白名单作用于聚合管线的最终输出，可见集合与调用校验共用同一结果。
+type ToolAccessAuthorizer interface {
+	AllowedToolNames(ctx context.Context, apiKeyID string) (allowed map[string]struct{}, restricted bool, err error)
+}
+
 // Service 是 domain.Aggregation_Service 的实现，编排聚合管线并（后续任务）负责调用路由。
 //
 // 依赖通过构造函数注入，全部为窄接口与领域接口，不直接耦合具体存储类型：
@@ -132,6 +138,7 @@ type Service struct {
 	toolPolicies             ToolPolicyLister
 	riskAuthorizer           RiskAuthorizer
 	upstreamAccessAuthorizer UpstreamAccessAuthorizer
+	toolAccessAuthorizer     ToolAccessAuthorizer
 	// upstreamConfigs 保存最近一次构建管线读取到的上游配置，供路由选择读取限流配置。
 	upstreamConfigs   map[string]domain.UpstreamConfig
 	upstreamConfigsMu sync.RWMutex
@@ -180,6 +187,12 @@ type Service struct {
 // SetUpstreamAccessAuthorizer 注入 API Key 上游范围授权器。
 func (s *Service) SetUpstreamAccessAuthorizer(authorizer UpstreamAccessAuthorizer) *Service {
 	s.upstreamAccessAuthorizer = authorizer
+	return s
+}
+
+// SetToolAccessAuthorizer 注入 API Key 工具白名单授权器。
+func (s *Service) SetToolAccessAuthorizer(authorizer ToolAccessAuthorizer) *Service {
+	s.toolAccessAuthorizer = authorizer
 	return s
 }
 
@@ -1352,7 +1365,36 @@ func (s *Service) buildToolSetWithReverseMapFresh(ctx context.Context, apiKeyID 
 
 	// 阶段 2-6：交由确定性纯函数管线处理。
 	tools, reverse := runPipeline(s.engine, bundles, apiKeyFilters)
+
+	// 阶段 7：API Key 工具白名单，按最终对外名裁剪可见集合与反向映射。
+	if s.toolAccessAuthorizer != nil && apiKeyID != "" {
+		allowed, restricted, err := s.toolAccessAuthorizer.AllowedToolNames(ctx, apiKeyID)
+		if err != nil {
+			log.Warn("读取 API Key 工具白名单失败", "apiKeyID", apiKeyID, "error", err)
+			return nil, nil, err
+		}
+		if restricted {
+			tools, reverse = applyToolAllowlist(tools, reverse, allowed)
+		}
+	}
 	return tools, reverse, nil
+}
+
+// applyToolAllowlist 仅保留白名单中的对外工具，输出保持原有顺序。
+func applyToolAllowlist(tools []domain.ToolDef, reverse map[string]ReverseEntry, allowed map[string]struct{}) ([]domain.ToolDef, map[string]ReverseEntry) {
+	outTools := make([]domain.ToolDef, 0, len(tools))
+	for _, tool := range tools {
+		if _, ok := allowed[tool.Name]; ok {
+			outTools = append(outTools, tool)
+		}
+	}
+	outReverse := make(map[string]ReverseEntry, len(outTools))
+	for name, entry := range reverse {
+		if _, ok := allowed[name]; ok {
+			outReverse[name] = entry
+		}
+	}
+	return outTools, outReverse
 }
 
 func cloneToolDefs(in []domain.ToolDef) []domain.ToolDef {

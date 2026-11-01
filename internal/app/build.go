@@ -119,6 +119,8 @@ func (a *App) build(envCfg config.EnvConfig) error {
 	agg.SetRiskAuthorizer(risk.NewAuthorizer(riskProfileReaderAdapter{repo: repos.APIKey}, repos.ToolRisk))
 	upstreamAccessMgr := apikey.NewUpstreamAccessManager(repos.APIKeyUpstreamAccess)
 	agg.SetUpstreamAccessAuthorizer(upstreamAccessMgr)
+	toolAccessMgr := apikey.NewToolAccessManager(repos.APIKeyToolAccess)
+	agg.SetToolAccessAuthorizer(toolAccessMgr)
 	agg.SetRoutingStrategy(yamlCfg.Aggregation.ToolRoutingStrategy)
 	agg.SetQuotaManager(aggregation.NewQuotaManager(aggregation.NewRedisQuotaCounter(a.rdb), a.logger))
 	a.agg = agg
@@ -248,6 +250,7 @@ func (a *App) build(envCfg config.EnvConfig) error {
 		APIKeys:         apiKeyMgr,
 		APIKeyFilters:   apiKeyFilterMgr,
 		APIKeyUpstreams: upstreamAccessMgr,
+		APIKeyTools:     toolAccessMgr,
 		ACLStore:        repos.ACL,
 		RateLimitStore:  repos.APIKey,
 		ToolRiskStore:   repos.ToolRisk,

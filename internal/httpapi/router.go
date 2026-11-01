@@ -175,6 +175,12 @@ type APIKeyUpstreamAccessService interface {
 	Set(ctx context.Context, apiKeyID string, cfg apikey.UpstreamAccessConfig) (apikey.UpstreamAccessConfig, error)
 }
 
+// APIKeyToolAccessService 是 API Key 工具白名单读写依赖的窄接口；*apikey.ToolAccessManager 满足该接口。
+type APIKeyToolAccessService interface {
+	Get(ctx context.Context, apiKeyID string) (apikey.ToolAccessConfig, error)
+	Set(ctx context.Context, apiKeyID string, cfg apikey.ToolAccessConfig) (apikey.ToolAccessConfig, error)
+}
+
 type ToolRiskStore interface {
 	Get(context.Context, string, string) (risk.Assessment, error)
 	List(context.Context, store.RiskListQuery) (store.RiskListResult, error)
@@ -371,6 +377,7 @@ type Router struct {
 	// apiKeyFilters 为 API Key 级屏蔽规则管理应用服务。
 	apiKeyFilters   APIKeyFilterService
 	apiKeyUpstreams APIKeyUpstreamAccessService
+	apiKeyTools     APIKeyToolAccessService
 	// aclStore 为 API Key 来源白名单仓储。
 	aclStore ACLStore
 	// rateLimitStore 为 API Key 限流配置仓储。
@@ -466,6 +473,7 @@ type Deps struct {
 	APIKeys         APIKeyService
 	APIKeyFilters   APIKeyFilterService
 	APIKeyUpstreams APIKeyUpstreamAccessService
+	APIKeyTools     APIKeyToolAccessService
 	ACLStore        ACLStore
 	RateLimitStore  RateLimitStore
 	ToolRiskStore   ToolRiskStore
@@ -500,6 +508,7 @@ func NewRouter(d Deps) *Router {
 		apiKeys:         d.APIKeys,
 		apiKeyFilters:   d.APIKeyFilters,
 		apiKeyUpstreams: d.APIKeyUpstreams,
+		apiKeyTools:     d.APIKeyTools,
 		aclStore:        d.ACLStore,
 		rateLimitStore:  d.RateLimitStore,
 		toolRiskStore:   d.ToolRiskStore,

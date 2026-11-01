@@ -42,6 +42,8 @@ type Repositories struct {
 	ACL *ACLRepo
 	// APIKeyUpstreamAccess 为 API Key 上游访问范围仓储。
 	APIKeyUpstreamAccess *APIKeyUpstreamAccessRepo
+	// APIKeyToolAccess 为 API Key 工具白名单仓储。
+	APIKeyToolAccess *APIKeyToolAccessRepo
 	// ToolCache 为工具缓存持久副本仓储。
 	ToolCache *ToolCacheRepo
 	// CallStat 为调用统计仓储。
@@ -70,6 +72,7 @@ func NewRepositories(db *gorm.DB) *Repositories {
 		APIKey:               NewAPIKeyRepo(db),
 		ACL:                  NewACLRepo(db),
 		APIKeyUpstreamAccess: NewAPIKeyUpstreamAccessRepo(db),
+		APIKeyToolAccess:     NewAPIKeyToolAccessRepo(db),
 		ToolCache:            NewToolCacheRepo(db),
 		CallStat:             NewCallStatRepo(db),
 		Audit:                NewAuditRepo(db),

@@ -131,6 +131,7 @@ type apiKeyModel struct {
 	QuotaPerMonth      *int       `gorm:"column:quota_per_month;type:integer"`
 	RiskProfile        string     `gorm:"column:risk_profile;type:varchar(32);not null;default:'legacy_unrestricted'"`
 	UpstreamAccessMode string     `gorm:"column:upstream_access_mode;type:varchar(16);not null;default:'all'"`
+	ToolAccessMode     string     `gorm:"column:tool_access_mode;type:varchar(16);not null;default:'all'"`
 	CreatedAt          time.Time  `gorm:"column:created_at;type:timestamptz;not null;default:now()"`
 }
 
@@ -161,6 +162,14 @@ type apiKeyUpstreamAccessModel struct {
 }
 
 func (apiKeyUpstreamAccessModel) TableName() string { return "api_key_upstream_access" }
+
+// apiKeyToolAccessModel 记录 API Key 在 tool_access_mode=selected 时允许暴露的对外工具名。
+type apiKeyToolAccessModel struct {
+	APIKeyID string `gorm:"column:api_key_id;type:uuid;primaryKey"`
+	ToolName string `gorm:"column:tool_name;type:varchar(200);primaryKey"`
+}
+
+func (apiKeyToolAccessModel) TableName() string { return "api_key_tool_access" }
 
 type toolCacheModel struct {
 	UpstreamID     string    `gorm:"column:upstream_id;type:uuid;primaryKey"`

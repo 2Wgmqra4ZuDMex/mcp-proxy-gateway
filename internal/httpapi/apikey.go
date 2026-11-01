@@ -109,6 +109,11 @@ type apiKeyUpstreamAccessRequest struct {
 	UpstreamIDs []string                  `json:"upstreamIds"`
 }
 
+type apiKeyToolAccessRequest struct {
+	Mode      apikey.UpstreamAccessMode `json:"mode"`
+	ToolNames []string                  `json:"toolNames"`
+}
+
 // registerAPIKeyRoutes 在管理分组下注册 API Key 生命周期、屏蔽规则、ACL 与限流配置端点。
 func (r *Router) registerAPIKeyRoutes(g *gin.RouterGroup) {
 	keys := g.Group("/apikeys")
@@ -123,6 +128,8 @@ func (r *Router) registerAPIKeyRoutes(g *gin.RouterGroup) {
 	keys.GET("/:id/risk-impact", r.getAPIKeyRiskImpact)
 	keys.GET("/:id/upstream-access", r.getAPIKeyUpstreamAccess)
 	keys.PUT("/:id/upstream-access", r.updateAPIKeyUpstreamAccess)
+	keys.GET("/:id/tool-access", r.getAPIKeyToolAccess)
+	keys.PUT("/:id/tool-access", r.updateAPIKeyToolAccess)
 
 	// API Key 级屏蔽规则（Req 13.1）：列表/创建按 API Key 分组。
 	keys.GET("/:id/filters", r.listAPIKeyFilters)
@@ -169,6 +176,40 @@ func (r *Router) updateAPIKeyUpstreamAccess(c *gin.Context) {
 	}
 	cfg, err := r.apiKeyUpstreams.Set(c.Request.Context(), c.Param("id"), apikey.UpstreamAccessConfig{
 		Mode: req.Mode, UpstreamIDs: req.UpstreamIDs,
+	})
+	if err != nil {
+		respondError(c, err)
+		return
+	}
+	r.invalidateToolSetCache()
+	r.recordUpdate(c, audit.ResourceAPIKey, c.Param("id"))
+	respondOK(c, cfg)
+}
+
+func (r *Router) getAPIKeyToolAccess(c *gin.Context) {
+	if r.apiKeyTools == nil {
+		respondServiceUnavailable(c, "API Key 工具权限服务未就绪")
+		return
+	}
+	cfg, err := r.apiKeyTools.Get(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		respondError(c, err)
+		return
+	}
+	respondOK(c, cfg)
+}
+
+func (r *Router) updateAPIKeyToolAccess(c *gin.Context) {
+	if r.apiKeyTools == nil {
+		respondServiceUnavailable(c, "API Key 工具权限服务未就绪")
+		return
+	}
+	var req apiKeyToolAccessRequest
+	if !bindJSON(c, &req) {
+		return
+	}
+	cfg, err := r.apiKeyTools.Set(c.Request.Context(), c.Param("id"), apikey.ToolAccessConfig{
+		Mode: req.Mode, ToolNames: req.ToolNames,
 	})
 	if err != nil {
 		respondError(c, err)

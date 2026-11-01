@@ -32,6 +32,7 @@ import {
 import type { RiskProfile } from '@/api/aiRisk'
 import { riskProfileDescription, riskProfileLabel } from '@/utils/riskLevel'
 import AppSelect from '@/components/common/AppSelect.vue'
+import APIKeyToolAccessPanel from '@/components/apikeys/APIKeyToolAccessPanel.vue'
 import { getAggregatedTools, type ToolDetail } from '@/api/tools'
 import { CONN_STATE_LABELS, listUpstreams, type Upstream } from '@/api/upstreams'
 import { getAPIKeyUsageProfile, type APIKeyToolUsage, type APIKeyUsageProfile } from '@/api/stats'
@@ -53,7 +54,7 @@ const { confirm } = useConfirm()
 const toast = useToast()
 
 /** 当前激活的分页签。 */
-type Tab = 'profile' | 'risk' | 'upstreams' | 'filters' | 'acl' | 'ratelimit'
+type Tab = 'profile' | 'risk' | 'upstreams' | 'tools' | 'filters' | 'acl' | 'ratelimit'
 const activeTab = ref<Tab>('filters')
 
 /** 通用提示与加载状态。 */
@@ -616,6 +617,7 @@ function buildFilterPreviewSummary(rule: APIKeyFilter): APIKeyFilterPreviewSumma
               { key: 'profile', label: '使用画像' },
               { key: 'risk', label: '风险档案' },
               { key: 'upstreams', label: '上游权限' },
+              { key: 'tools', label: '工具权限' },
               { key: 'filters', label: '屏蔽规则' },
               { key: 'acl', label: 'IP 白名单' },
               { key: 'ratelimit', label: '调用限制' },
@@ -933,6 +935,10 @@ function buildFilterPreviewSummary(rule: APIKeyFilter): APIKeyFilterPreviewSumma
                 </button>
               </div>
             </template>
+          </section>
+
+          <section v-else-if="activeTab === 'tools' && apiKey !== null">
+            <APIKeyToolAccessPanel :api-key-id="apiKey.id" />
           </section>
 
           <!-- 屏蔽规则 -->

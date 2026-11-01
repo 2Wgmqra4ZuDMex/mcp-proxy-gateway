@@ -8,6 +8,7 @@ import (
 
 	"github.com/myGithub/mcp-proxy-gateway/internal/domain"
 	"github.com/myGithub/mcp-proxy-gateway/internal/risk"
+	"github.com/myGithub/mcp-proxy-gateway/internal/store"
 )
 
 // validateBusiness 校验业务配置的引用完整性与字段级约束（Req 23.5、23.6）。
@@ -78,6 +79,14 @@ func validateBusiness(bc BusinessConfig) error {
 		}
 		if k.Meta.UpstreamAccessMode != "" && k.Meta.UpstreamAccessMode != "all" && k.Meta.UpstreamAccessMode != "selected" {
 			fields[prefix+".meta.upstreamAccessMode"] = "上游访问模式只能是 all 或 selected"
+		}
+		if k.ToolAccessMode != "" && k.ToolAccessMode != "all" && k.ToolAccessMode != "selected" {
+			fields[prefix+".toolAccessMode"] = "工具访问模式只能是 all 或 selected"
+		}
+		for j, name := range k.ToolNames {
+			if len(name) > store.MaxToolAccessNameLen {
+				fields[fmt.Sprintf("%s.toolNames[%d]", prefix, j)] = "工具名过长"
+			}
 		}
 		for j, id := range k.UpstreamIDs {
 			if _, ok := seenUpstreamID[id]; !ok {
