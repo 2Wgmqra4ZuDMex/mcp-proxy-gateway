@@ -52,6 +52,14 @@ func TestCheckProbeMissingTool(t *testing.T) {
 	}
 }
 
+func TestCheckProbeRateLimitedPlainResultIsNotValid(t *testing.T) {
+	sess := &fakeToolSession{tools: checkTools(), callResult: domain.ToolResult{Content: json.RawMessage(`[{"type":"text","text":"{\"error\":\"Search failed\",\"status\":429,\"detail\":{\"error\":\"excessive requests\"}}"}]`)}}
+	res, _ := upstreamTester{factory: fakeFactory{sess: sess}}.Check(context.Background(), "u1", domain.UpstreamConfig{}, &domain.UpstreamCheckProbe{Tool: "search"})
+	if res.Call == nil || res.Call.OK || !strings.Contains(res.Call.Message, "限流") {
+		t.Fatalf("把 429 当普通结果返回时不应判为 Key 有效：%+v", res.Call)
+	}
+}
+
 func TestCheckConnectFailureSkipsProbe(t *testing.T) {
 	sess := &fakeToolSession{connectErr: errors.New("dial failed")}
 	res, _ := upstreamTester{factory: fakeFactory{sess: sess}}.Check(context.Background(), "u1", domain.UpstreamConfig{}, &domain.UpstreamCheckProbe{Tool: "search"})

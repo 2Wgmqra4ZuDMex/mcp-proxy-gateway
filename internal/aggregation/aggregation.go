@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"slices"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -151,6 +152,8 @@ type Service struct {
 	toolSetCacheVersion uint64
 	toolSetCacheMu      sync.RWMutex
 	searchKeywordsFn    func(originalName, description string) string
+	accountLimitMu      sync.Mutex
+	accountLimits       map[string]accountLimitState
 	// routingStrategy 为同名工具多来源时的调用选择策略。
 	routingStrategy        domain.ToolRoutingStrategy
 	routingMu              sync.RWMutex
@@ -707,76 +710,137 @@ func (s *Service) InvokeTool(ctx context.Context, apiKeyID, exposedName string, 
 		return domain.ToolResult{}, domain.ErrNotImplemented
 	}
 
-	candidate, err := s.selectCandidate(ctx, entry, policy)
-	if err != nil {
-		log.Warn("工具来源选择失败，调用未转发", "exposedName", exposedName, "apiKeyID", apiKeyID, "error", err)
-		return domain.ToolResult{}, err
+	// 步骤 5：按路由策略选择来源并调用。上游账号明确拒绝（限流、额度用完、Key 无效）时请求
+	// 未被执行，换同名工具的下一个账号重试；被拒账号进入冷却，期间优先跳过。
+	tried := make(map[string]struct{})
+	var (
+		result    domain.ToolResult
+		callErr   error
+		candidate ToolCandidate
+		attempted bool
+	)
+	for attempt := 0; attempt <= maxAccountFailovers; attempt++ {
+		attemptEntry, ok := s.candidatesForAttempt(entry, tried)
+		if !ok {
+			break
+		}
+		next, err := s.selectCandidate(ctx, attemptEntry, policy)
+		if err != nil {
+			if attempted {
+				// 已有一次被拒的结果：其余来源不可用时原样返回该结果。
+				break
+			}
+			log.Warn("工具来源选择失败，调用未转发", "exposedName", exposedName, "apiKeyID", apiKeyID, "error", err)
+			return domain.ToolResult{}, err
+		}
+		if err := s.authorizeCandidate(ctx, apiKeyID, next); err != nil {
+			if attempted {
+				tried[sourceFailureKey(next)] = struct{}{}
+				continue
+			}
+			return domain.ToolResult{}, err
+		}
+		candidate = next
+
+		log.Debug("工具调用转发上游", "exposedName", exposedName, "upstreamID", candidate.UpstreamID, "originalName", candidate.OriginalName, "apiKeyID", apiKeyID, "mode", mode, "attempt", attempt+1)
+		startedAt := time.Now()
+		var pendingErr error
+		result, callErr, pendingErr = s.dispatchCandidate(ctx, &candidate, args)
+		if pendingErr != nil {
+			if attempted {
+				break
+			}
+			// 未发送工具请求的恢复/额度失败：不记录来源故障或调用统计。
+			return domain.ToolResult{}, pendingErr
+		}
+		attempted = true
+		s.recordSourceResult(candidate, callErr)
+
+		rejection, rejected := DetectAccountRejection(result, callErr)
+		var rejectionPtr *AccountRejection
+		if rejected {
+			rejectionPtr = &rejection
+		}
+		// 每次实际发往上游的尝试都单独记一条统计，被拒的账号记为失败。
+		s.recordCallAttempt(ctx, apiKeyID, exposedName, candidate, startedAt, args, result, callErr, rejectionPtr)
+
+		if !rejected {
+			if callErr != nil {
+				log.Warn("工具调用上游失败", "exposedName", exposedName, "upstreamID", candidate.UpstreamID, "latencyMS", int(time.Since(startedAt).Milliseconds()), "error", callErr)
+			} else {
+				log.Debug("工具调用完成", "exposedName", exposedName, "upstreamID", candidate.UpstreamID, "latencyMS", int(time.Since(startedAt).Milliseconds()), "isError", result.IsError, "mode", mode)
+				if hasPolicy && policy.CacheEnabled && policy.CacheTTLSeconds > 0 && !result.IsError {
+					s.setCachedToolResult(apiKeyID, exposedName, args, result, time.Duration(policy.CacheTTLSeconds)*time.Second)
+				}
+			}
+			return result, callErr
+		}
+		s.markAccountLimited(candidate.UpstreamID, rejection)
+		tried[sourceFailureKey(candidate)] = struct{}{}
+		log.Warn("上游账号拒绝调用，切换下一个账号", "exposedName", exposedName, "upstreamID", candidate.UpstreamID,
+			"upstreamName", candidate.UpstreamName, "kind", rejection.Kind, "status", rejection.Status, "cooldown", rejection.Cooldown.String())
 	}
+	if callErr != nil {
+		log.Warn("工具调用上游失败（所有可用账号均已尝试）", "exposedName", exposedName, "upstreamID", candidate.UpstreamID, "error", callErr)
+	}
+	return result, callErr
+}
+
+// authorizeCandidate 在发往上游前复核该 API Key 对来源的上游权限与风险档案。
+func (s *Service) authorizeCandidate(ctx context.Context, apiKeyID string, candidate ToolCandidate) error {
 	if s.upstreamAccessAuthorizer != nil {
 		if err := s.upstreamAccessAuthorizer.AuthorizeUpstream(ctx, apiKeyID, candidate.UpstreamID); err != nil {
-			log.Info("工具来源被上游权限拒绝", "apiKeyID", apiKeyID, "upstreamID", candidate.UpstreamID)
-			return domain.ToolResult{}, err
+			s.logger().Info("工具来源被上游权限拒绝", "apiKeyID", apiKeyID, "upstreamID", candidate.UpstreamID)
+			return err
 		}
 	}
 	if s.riskAuthorizer != nil {
 		if err := s.riskAuthorizer.AuthorizeSource(ctx, apiKeyID, candidate.UpstreamID, candidate.OriginalName); err != nil {
-			log.Info("工具来源被风险档案拒绝", "apiKeyID", apiKeyID, "upstreamID", candidate.UpstreamID, "originalName", candidate.OriginalName)
-			return domain.ToolResult{}, err
+			s.logger().Info("工具来源被风险档案拒绝", "apiKeyID", apiKeyID, "upstreamID", candidate.UpstreamID, "originalName", candidate.OriginalName)
+			return err
 		}
 	}
+	return nil
+}
 
-	// 调用前记录起点，用于计算响应耗时（毫秒，Req 16.1）。统计写入绝不影响调用结果。
-	log.Debug("工具调用转发上游", "exposedName", exposedName, "upstreamID", candidate.UpstreamID, "originalName", candidate.OriginalName, "apiKeyID", apiKeyID, "mode", mode)
-	startedAt := time.Now()
-	var result domain.ToolResult
-	var callErr error
+// dispatchCandidate 把调用发往候选来源。第三个返回值非 nil 表示工具请求从未发出
+// （按需恢复或额度预占失败且没有后续恢复候选），调用方不应记录统计。
+// 恢复候选可能在内部切换，candidate 会被更新为实际调用的来源。
+func (s *Service) dispatchCandidate(ctx context.Context, candidate *ToolCandidate, args json.RawMessage) (domain.ToolResult, error, error) {
 	for {
+		var (
+			result  domain.ToolResult
+			callErr error
+		)
 		if candidate.deferQuotaReservation {
 			preDispatch, ok := s.invoker.(PreDispatchInvoker)
 			if !ok {
-				return domain.ToolResult{}, domain.NewError(domain.CodeUpstreamUnavailable, "上游 MCP 恢复协调器未就绪")
+				return domain.ToolResult{}, nil, domain.NewError(domain.CodeUpstreamUnavailable, "上游 MCP 恢复协调器未就绪")
 			}
+			current := *candidate
 			result, callErr = preDispatch.CallUpstreamWithPreDispatch(
 				ctx,
-				candidate.UpstreamID,
-				candidate.OriginalName,
+				current.UpstreamID,
+				current.OriginalName,
 				args,
 				func(reserveCtx context.Context) error {
-					return s.reserveCandidateQuota(reserveCtx, candidate)
+					return s.reserveCandidateQuota(reserveCtx, current)
 				},
 			)
 		} else {
 			result, callErr = s.invoker.CallUpstream(ctx, candidate.UpstreamID, candidate.OriginalName, args)
 		}
-
 		if pending, ok := errors.AsType[*PreDispatchError](callErr); ok {
 			if len(candidate.recoveryFallbacks) > 0 {
 				next := candidate.recoveryFallbacks[0]
 				next.recoveryFallbacks = append([]ToolCandidate(nil), candidate.recoveryFallbacks[1:]...)
-				candidate = next
+				*candidate = next
 				continue
 			}
-			// 未发送工具请求的恢复/额度失败：不记录来源故障或调用统计。
-			return domain.ToolResult{}, pending.Err
+			return domain.ToolResult{}, nil, pending.Err
 		}
-		break
+		return result, callErr, nil
 	}
-	s.recordSourceResult(candidate, callErr)
-
-	// 步骤 5：异步采集调用统计（Req 16.1、16.8、16.9）。
-	// 以非阻塞方式提交，主流程附加耗时极小且永不阻塞；记录器未注入时跳过。
-	s.recordCall(ctx, apiKeyID, exposedName, candidate, startedAt, args, result, callErr)
-
-	if callErr != nil {
-		log.Warn("工具调用上游失败", "exposedName", exposedName, "upstreamID", candidate.UpstreamID, "latencyMS", int(time.Since(startedAt).Milliseconds()), "error", callErr)
-	} else {
-		log.Debug("工具调用完成", "exposedName", exposedName, "upstreamID", candidate.UpstreamID, "latencyMS", int(time.Since(startedAt).Milliseconds()), "isError", result.IsError, "mode", mode)
-		if hasPolicy && policy.CacheEnabled && policy.CacheTTLSeconds > 0 && !result.IsError {
-			s.setCachedToolResult(apiKeyID, exposedName, args, result, time.Duration(policy.CacheTTLSeconds)*time.Second)
-		}
-	}
-
-	return result, callErr
 }
 
 func (s *Service) selectCandidate(ctx context.Context, entry ReverseEntry, policy domain.ToolPolicyRule) (ToolCandidate, error) {
@@ -1121,13 +1185,28 @@ func (s *Service) upstreamConfig(id string) (domain.UpstreamConfig, bool) {
 // 上游报告的错误结果（result.IsError）均记为失败，其余记为成功——与「原样透传上游结果」
 // 的语义一致（Req 10.3）。recorder 未注入时为无操作。
 func (s *Service) recordCall(ctx context.Context, apiKeyID, exposedName string, entry ToolCandidate, startedAt time.Time, args json.RawMessage, result domain.ToolResult, callErr error) {
+	s.recordCallAttempt(ctx, apiKeyID, exposedName, entry, startedAt, args, result, callErr, nil)
+}
+
+// recordCallAttempt 记录一次实际发往上游的尝试；rejection 非空表示上游账号拒绝了请求，记为失败。
+func (s *Service) recordCallAttempt(ctx context.Context, apiKeyID, exposedName string, entry ToolCandidate, startedAt time.Time, args json.RawMessage, result domain.ToolResult, callErr error, rejection *AccountRejection) {
 	if s.recorder == nil {
 		s.logger().Debug("统计记录器未注入，跳过调用统计", "exposedName", exposedName)
 		return
 	}
 	latencyMS := int(time.Since(startedAt).Milliseconds())
-	success := callErr == nil && !result.IsError
+	success := callErr == nil && !result.IsError && rejection == nil
 	status, errMsg, failureDetail := callFailure(result, callErr)
+	if rejection != nil && callErr == nil {
+		status = store.CallStatusUpstreamError
+		errMsg = rejectionLabel(rejection.Kind) + "：" + rejection.Message
+		failureDetail = marshalFailureDetail(callFailureDetail{
+			Kind:       "account_rejected",
+			Code:       "ACCOUNT_" + strings.ToUpper(rejection.Kind),
+			Message:    rejectionLabel(rejection.Kind) + "，已切换其他账号",
+			HTTPStatus: rejection.Status,
+		})
+	}
 	mode := ModeFromContext(ctx)
 	source := SourceFromContext(ctx)
 	s.recorder.RecordAsync(ctx, store.CallStatRecord{
@@ -1188,6 +1267,18 @@ func callFailure(result domain.ToolResult, callErr error) (string, string, json.
 		return store.CallStatusUpstreamError, "", marshalFailureDetail(detail)
 	}
 	return store.CallStatusSuccess, "", nil
+}
+
+func rejectionLabel(kind string) string {
+	switch kind {
+	case RejectionRateLimited:
+		return "上游账号被限流"
+	case RejectionQuotaExhausted:
+		return "上游账号额度不足"
+	case RejectionUnauthorized:
+		return "上游账号 Key 无效"
+	}
+	return "上游账号拒绝调用"
 }
 
 func marshalFailureDetail(detail callFailureDetail) json.RawMessage {

@@ -7,6 +7,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/myGithub/mcp-proxy-gateway/internal/aggregation"
 	"github.com/myGithub/mcp-proxy-gateway/internal/domain"
 )
 
@@ -76,7 +77,24 @@ func (t upstreamTester) Check(ctx context.Context, id string, cfg domain.Upstrea
 	if res.IsError {
 		call.Message = call.Preview
 	}
+	// 有的上游把限流/额度/Key 错误当普通结果返回（isError=false），同样判为失败。
+	if rejection, rejected := aggregation.DetectAccountRejection(res, nil); rejected {
+		call.OK = false
+		call.Message = accountRejectionLabel(rejection.Kind) + "：" + call.Preview
+	}
 	return result, nil
+}
+
+func accountRejectionLabel(kind string) string {
+	switch kind {
+	case aggregation.RejectionRateLimited:
+		return "账号被限流"
+	case aggregation.RejectionQuotaExhausted:
+		return "账号额度不足"
+	case aggregation.RejectionUnauthorized:
+		return "Key 无效"
+	}
+	return "账号拒绝调用"
 }
 
 // contentPreview 提取 MCP content 中的文本并截断，用于展示调用结果摘要。
