@@ -566,7 +566,6 @@ const linkBtn = 'text-sm font-medium transition disabled:opacity-50'
     <div
       v-if="editorOpen"
       class="fixed inset-0 z-[100000] flex items-center justify-center bg-gray-900/40 p-4 backdrop-blur-[1px]"
-      @click.self="editorOpen = false"
     >
       <form
         class="w-full max-w-lg rounded-2xl border border-gray-200 bg-white p-6 shadow-xl dark:border-gray-800 dark:bg-gray-900"
@@ -632,7 +631,6 @@ const linkBtn = 'text-sm font-medium transition disabled:opacity-50'
     <div
       v-if="distributeOpen"
       class="fixed inset-0 z-[100000] flex items-center justify-center bg-gray-900/40 p-4 backdrop-blur-[1px]"
-      @click.self="distributeOpen = false"
     >
       <div
         class="flex max-h-[88vh] w-full max-w-lg flex-col rounded-2xl border border-gray-200 bg-white p-6 shadow-xl dark:border-gray-800 dark:bg-gray-900"
