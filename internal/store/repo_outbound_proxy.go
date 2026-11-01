@@ -54,8 +54,8 @@ func (r *OutboundProxyRepo) List(ctx context.Context) ([]OutboundProxy, error) {
 }
 
 func (r *OutboundProxyRepo) Get(ctx context.Context, id string) (OutboundProxy, error) {
-	uid, err := parseUUID(id)
-	if err != nil {
+	uid, err := parseUUID(strings.TrimSpace(id))
+	if err != nil || uid == "" {
 		return OutboundProxy{}, domain.NewError(domain.CodeNotFound, "出站代理不存在")
 	}
 	var m outboundProxyModel
@@ -68,8 +68,10 @@ func (r *OutboundProxyRepo) Get(ctx context.Context, id string) (OutboundProxy, 
 // Create 新建代理；p.ID 为合法 UUID 时沿用（备份导入保持引用关系），否则生成新标识。
 func (r *OutboundProxyRepo) Create(ctx context.Context, p OutboundProxy) (OutboundProxy, error) {
 	id := newUUID()
-	if parsed, err := parseUUID(strings.TrimSpace(p.ID)); err == nil {
-		id = parsed
+	if raw := strings.TrimSpace(p.ID); raw != "" {
+		if parsed, err := parseUUID(raw); err == nil {
+			id = parsed
+		}
 	}
 	if err := r.db.WithContext(ctx).Model(&outboundProxyModel{}).Create(map[string]any{
 		"id":      id,
@@ -84,8 +86,8 @@ func (r *OutboundProxyRepo) Create(ctx context.Context, p OutboundProxy) (Outbou
 }
 
 func (r *OutboundProxyRepo) Update(ctx context.Context, p OutboundProxy) (OutboundProxy, error) {
-	uid, err := parseUUID(p.ID)
-	if err != nil {
+	uid, err := parseUUID(strings.TrimSpace(p.ID))
+	if err != nil || uid == "" {
 		return OutboundProxy{}, domain.NewError(domain.CodeNotFound, "出站代理不存在")
 	}
 	res := r.db.WithContext(ctx).Model(&outboundProxyModel{}).Where("id = ?", uid).Updates(map[string]any{
@@ -104,8 +106,8 @@ func (r *OutboundProxyRepo) Update(ctx context.Context, p OutboundProxy) (Outbou
 }
 
 func (r *OutboundProxyRepo) Delete(ctx context.Context, id string) error {
-	uid, err := parseUUID(id)
-	if err != nil {
+	uid, err := parseUUID(strings.TrimSpace(id))
+	if err != nil || uid == "" {
 		return domain.NewError(domain.CodeNotFound, "出站代理不存在")
 	}
 	res := r.db.WithContext(ctx).Where("id = ?", uid).Delete(&outboundProxyModel{})
