@@ -8,8 +8,6 @@
 import { ref, watch } from 'vue'
 import { createAPIKey, type CreatedAPIKey } from '@/api/apikeys'
 import type { RiskProfile } from '@/api/aiRisk'
-import AppSelect from '@/components/common/AppSelect.vue'
-import { riskProfileDescription, riskProfileLabel } from '@/utils/riskLevel'
 
 const props = defineProps<{ open: boolean }>()
 
@@ -22,8 +20,8 @@ const emit = defineEmits<{
 const name = ref('')
 /** datetime-local 输入值（本地时区），提交时转换为 RFC3339。 */
 const expiresAtLocal = ref('')
-const riskProfile = ref<RiskProfile>('standard')
-const riskProfiles: RiskProfile[] = ['readonly', 'standard', 'privileged', 'legacy_unrestricted']
+// 工具范围由「工具权限」与屏蔽规则控制；风险档案固定为不限制（未做 AI 评级时其它档位会屏蔽全部工具）。
+const riskProfile: RiskProfile = 'legacy_unrestricted'
 
 /** 提交状态与错误。 */
 const submitting = ref(false)
@@ -36,7 +34,6 @@ watch(
     if (open) {
       name.value = ''
       expiresAtLocal.value = ''
-      riskProfile.value = 'standard'
       errorMessage.value = ''
       submitting.value = false
     }
@@ -56,7 +53,7 @@ async function submit(): Promise<void> {
     // datetime-local 无时区信息，交由 Date 解析为本地时间后转 RFC3339（ISO）。
     const expiresAt =
       expiresAtLocal.value !== '' ? new Date(expiresAtLocal.value).toISOString() : null
-    const created = await createAPIKey({ name: trimmed, expiresAt, riskProfile: riskProfile.value })
+    const created = await createAPIKey({ name: trimmed, expiresAt, riskProfile })
     emit('created', created)
   } catch (err) {
     errorMessage.value = err instanceof Error ? err.message : '创建 API Key 失败'
@@ -96,27 +93,6 @@ async function submit(): Promise<void> {
             class="focus:border-brand-400 focus:ring-brand-100 w-full rounded-lg border border-gray-300 px-3.5 py-2.5 text-sm text-gray-800 focus:ring-2 focus:outline-none dark:border-gray-700 dark:bg-gray-800 dark:text-white/90"
             @keyup.enter="submit"
           />
-        </div>
-
-        <div class="mb-4">
-          <label class="mb-1.5 block text-sm font-medium text-gray-700 dark:text-gray-300">
-            风险档案
-          </label>
-          <AppSelect
-            v-model="riskProfile"
-            :options="
-              riskProfiles.map((profile) => ({
-                value: profile,
-                label: riskProfileLabel[profile],
-                description: riskProfileDescription[profile],
-              }))
-            "
-            size="lg"
-            aria-label="风险档案"
-          />
-          <p v-if="riskProfile === 'legacy_unrestricted'" class="text-warning-600 mt-1 text-xs">
-            兼容档会跳过风险目录，仅建议用于迁移已有客户端。
-          </p>
         </div>
 
         <div class="mb-6">

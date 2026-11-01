@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 /**
  * API Key 配置弹窗（任务 26.3）。
  *
@@ -20,8 +20,6 @@ import {
   deleteACL,
   getRateLimit,
   updateRateLimit,
-  setAPIKeyRiskProfile,
-  getAPIKeyRiskImpact,
   getAPIKeyUpstreamAccess,
   updateAPIKeyUpstreamAccess,
   type APIKey,
@@ -30,8 +28,6 @@ import {
   type UpstreamAccessMode,
 } from '@/api/apikeys'
 import type { RiskProfile } from '@/api/aiRisk'
-import { riskProfileDescription, riskProfileLabel } from '@/utils/riskLevel'
-import AppSelect from '@/components/common/AppSelect.vue'
 import APIKeyToolAccessPanel from '@/components/apikeys/APIKeyToolAccessPanel.vue'
 import { getAggregatedTools, type ToolDetail } from '@/api/tools'
 import { CONN_STATE_LABELS, listUpstreams, type Upstream } from '@/api/upstreams'
@@ -312,8 +308,6 @@ function positiveNumberOrNull(value: number | null): number | null {
 const usageProfile = ref<APIKeyUsageProfile | null>(null)
 const profileLoading = ref(false)
 const riskProfile = ref<RiskProfile>('standard')
-const riskProfileSaving = ref(false)
-const riskProfiles: RiskProfile[] = ['readonly', 'standard', 'privileged', 'legacy_unrestricted']
 let profileRequestSeq = 0
 
 // ── 上游权限 ─────────────────────────────────────────────
@@ -405,7 +399,7 @@ async function saveUpstreamAccess(): Promise<void> {
     title: denyAll ? '确认禁止全部上游' : '确认更新上游权限',
     message:
       upstreamAccessMode.value === 'all'
-        ? '保存后该 API Key 可访问全部已启用上游，仍受风险档案和屏蔽规则限制。'
+        ? '保存后该 API Key 可访问全部已启用上游，仍受工具权限和屏蔽规则限制。'
         : denyAll
           ? '当前没有选择任何上游，保存后该 API Key 将无法发现或调用任何 MCP 工具。'
           : `保存后仅允许访问 ${selectedCount} 个上游；新增上游默认不会自动放行。`,
@@ -510,28 +504,6 @@ async function loadUsageProfile(id: string): Promise<void> {
   }
 }
 
-async function saveRiskProfile(): Promise<void> {
-  if (props.apiKey === null) return
-  riskProfileSaving.value = true
-  try {
-    const impact = await getAPIKeyRiskImpact(props.apiKey.id, riskProfile.value)
-    const expands = impact.newlyAllowed > 0
-    const accepted = await confirm({
-      title: expands ? '确认扩大工具权限' : '确认切换风险档案',
-      message: `切换后可见来源 ${impact.targetVisible} 个；新增放行 ${impact.newlyAllowed} 个，新增隐藏 ${impact.newlyHidden} 个。${expands ? '请确认该 Key 仅交给可信客户端。' : ''}`,
-      confirmText: '确认切换',
-      tone: expands ? 'warning' : 'info',
-    })
-    if (!accepted) return
-    await setAPIKeyRiskProfile(props.apiKey.id, riskProfile.value)
-    showToast('风险档案已更新')
-  } catch (err) {
-    showError(err, '更新风险档案失败')
-  } finally {
-    riskProfileSaving.value = false
-  }
-}
-
 // ── 打开时加载全部从属配置 ────────────────────────────────────────────────
 watch(
   () => props.apiKey,
@@ -615,7 +587,6 @@ function buildFilterPreviewSummary(rule: APIKeyFilter): APIKeyFilterPreviewSumma
           <button
             v-for="tab in [
               { key: 'profile', label: '使用画像' },
-              { key: 'risk', label: '风险档案' },
               { key: 'upstreams', label: '上游权限' },
               { key: 'tools', label: '工具权限' },
               { key: 'filters', label: '屏蔽规则' },
@@ -755,48 +726,6 @@ function buildFilterPreviewSummary(rule: APIKeyFilter): APIKeyFilterPreviewSumma
             </div>
           </section>
 
-          <!-- 风险档案 -->
-          <section v-else-if="activeTab === 'risk'" class="space-y-4">
-            <div
-              class="rounded-xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-white/[0.03]"
-            >
-              <h4 class="text-sm font-semibold text-gray-800 dark:text-white/90">工具风险档案</h4>
-              <p class="mt-1 text-xs leading-5 text-gray-500 dark:text-gray-400">
-                根据工具的有效风险等级控制可见性和调用权限，与上游权限、屏蔽规则共同生效。
-              </p>
-              <div class="mt-4 flex flex-col gap-3 sm:flex-row sm:items-end">
-                <label class="min-w-0 flex-1 text-sm font-medium text-gray-700 dark:text-gray-300">
-                  选择档案
-                  <AppSelect
-                    v-model="riskProfile"
-                    class="mt-1.5"
-                    :options="
-                      riskProfiles.map((item) => ({
-                        value: item,
-                        label: riskProfileLabel[item],
-                        description: riskProfileDescription[item],
-                      }))
-                    "
-                    size="lg"
-                    aria-label="选择风险档案"
-                  />
-                </label>
-                <button
-                  type="button"
-                  class="bg-brand-500 hover:bg-brand-600 h-10 rounded-lg px-4 text-sm font-medium text-white transition disabled:bg-gray-300 disabled:text-gray-500 dark:disabled:bg-gray-700 dark:disabled:text-gray-400"
-                  :disabled="riskProfileSaving"
-                  @click="saveRiskProfile"
-                >
-                  {{ riskProfileSaving ? '保存中…' : '保存档案' }}
-                </button>
-              </div>
-              <p v-if="riskProfile === 'legacy_unrestricted'" class="text-warning-600 mt-3 text-xs">
-                兼容无限制会跳过风险目录，仅建议用于迁移旧客户端。
-              </p>
-            </div>
-          </section>
-
-          <!-- 上游权限 -->
           <section v-else-if="activeTab === 'upstreams'" class="space-y-4">
             <div
               v-if="upstreamAccessLoading"
@@ -810,7 +739,7 @@ function buildFilterPreviewSummary(rule: APIKeyFilter): APIKeyFilterPreviewSumma
               >
                 <h4 class="text-sm font-semibold text-gray-800 dark:text-white/90">上游访问范围</h4>
                 <p class="mt-1 text-xs leading-5 text-gray-500 dark:text-gray-400">
-                  限制该 API Key 可访问的 MCP 上游。此配置只缩小范围，不会绕过风险档案或屏蔽规则。
+                  限制该 API Key 可访问的 MCP 上游。此配置只缩小范围，不会绕过工具权限或屏蔽规则。
                 </p>
                 <div class="mt-4 grid gap-2 sm:grid-cols-2">
                   <button

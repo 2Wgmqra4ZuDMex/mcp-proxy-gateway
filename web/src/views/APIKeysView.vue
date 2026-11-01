@@ -357,7 +357,9 @@ async function copyKey(key: APIKey): Promise<void> {
                   {{ apiKeyLimitSummary(key) }}
                 </span>
                 <span
-                  class="bg-brand-50 text-brand-600 dark:bg-brand-500/10 dark:text-brand-400 inline-flex items-center rounded-full px-2 py-0.5 text-xs"
+                  v-if="(key.riskProfile || 'legacy_unrestricted') !== 'legacy_unrestricted'"
+                  v-tooltip="'该 Key 仍使用风险档案过滤工具，未评级的工具会被当作高风险隐藏'"
+                  class="bg-warning-50 text-warning-700 dark:bg-warning-500/10 dark:text-warning-400 inline-flex items-center rounded-full px-2 py-0.5 text-xs"
                 >
                   {{ riskProfileLabel[key.riskProfile || 'legacy_unrestricted'] }}
                 </span>

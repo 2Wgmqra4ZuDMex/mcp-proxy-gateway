@@ -126,7 +126,7 @@ async function save(): Promise<void> {
     title: denyAll ? '确认不暴露任何工具' : '确认更新工具权限',
     message:
       mode.value === 'all'
-        ? '保存后该 API Key 可看到全部工具，仍受上游权限、风险档案和屏蔽规则限制。'
+        ? '保存后该 API Key 可看到全部工具，仍受上游权限和屏蔽规则限制。'
         : denyAll
           ? '当前没有勾选任何工具，保存后该 API Key 将看不到也无法调用任何工具。'
           : `保存后该 API Key 只能看到并调用已勾选的 ${count} 个工具；之后新增的工具不会自动放行。`,
