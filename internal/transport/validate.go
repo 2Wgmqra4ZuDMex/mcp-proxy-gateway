@@ -89,6 +89,7 @@ func ValidateConnParams(cfg domain.UpstreamConfig) error {
 			cfg.Transport,
 		)
 	}
+	validateProxyParam(cfg.ConnParams, fields)
 
 	if len(fields) > 0 {
 		return domain.NewValidationError("上游 MCP 连接参数校验失败", fields)

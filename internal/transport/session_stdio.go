@@ -124,7 +124,7 @@ func (s *stdioSession) Connect(ctx context.Context) error {
 			args = []string{verifiedScript.Path}
 		}
 
-		userEnv := resolveStringMapCredentials(s.params.env, s.credential)
+		userEnv := proxyEnv(s.params.proxy, resolveStringMapCredentials(s.params.env, s.credential))
 		cmd := exec.Command(command, args...)
 		// 捕获子进程 stderr 的尾部：SDK 的 CommandTransport 只接管 stdin/stdout，
 		// 子进程崩溃时（如 Python ModuleNotFoundError）真实原因只在 stderr。

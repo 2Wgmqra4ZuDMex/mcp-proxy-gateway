@@ -42,7 +42,7 @@ func newOpenAPISession(cfg domain.UpstreamConfig) (UpstreamSession, error) {
 
 func (s *openAPISession) Connect(ctx context.Context) error {
 	return s.establish(ctx, func(dialCtx context.Context) (mcpClientConn, error) {
-		client := &http.Client{}
+		client := &http.Client{Transport: baseTransportFor(s.params.proxy)}
 		doc, err := loadOpenAPIDocument(dialCtx, client, s.params.openapi)
 		if err != nil {
 			return nil, err

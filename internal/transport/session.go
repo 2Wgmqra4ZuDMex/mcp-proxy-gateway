@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -83,6 +84,8 @@ type connParams struct {
 	headers map[string]string
 	// openapi 为 OpenAPI 虚拟上游参数。
 	openapi openAPIParams
+	// proxy 为出站代理；nil 表示沿用环境变量。
+	proxy *url.URL
 }
 
 // parseConnParams 在校验通过的前提下从配置中提取连接参数。
@@ -122,6 +125,8 @@ func parseConnParams(cfg domain.UpstreamConfig) (connParams, error) {
 	case domain.TransportOpenAPI:
 		p.openapi = parseOpenAPIParams(cfg)
 	}
+	// 已在 ValidateConnParams 中校验，此处不会出错。
+	p.proxy, _ = proxyURLFromParams(cfg.ConnParams)
 	return p, nil
 }
 

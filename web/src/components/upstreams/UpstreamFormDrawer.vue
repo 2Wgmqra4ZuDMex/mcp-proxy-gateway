@@ -202,6 +202,7 @@ const form = reactive<{
   envCredentialName: string
   headersText: string
   envText: string
+  proxyUrl: string
   cwd: string
   customParamsJson: string
   advancedOpen: boolean
@@ -251,6 +252,7 @@ const form = reactive<{
   apiKeyHeader: 'X-API-Key',
   envCredentialName: 'API_KEY',
   headersText: '',
+  proxyUrl: '',
   envText: '',
   cwd: '',
   customParamsJson: '',
@@ -437,6 +439,7 @@ function resetManualFields(): void {
   form.apiKeyHeader = 'X-API-Key'
   form.envCredentialName = 'API_KEY'
   form.headersText = ''
+  form.proxyUrl = ''
   form.envText = ''
   form.cwd = ''
   form.customParamsJson = ''
@@ -595,6 +598,7 @@ function customParamsFrom(params: ConnParams): string {
         'authValue',
         'runtimeRequirements',
         'securityProfile',
+        'proxyUrl',
       ].includes(key)
     )
       custom[key] = value
@@ -788,10 +792,12 @@ function fillFromConfig(
     typeof sp.allowSelfInstall === 'boolean' ? sp.allowSelfInstall : form.securityMode !== 'strict'
   form.securityNote = sp.note ?? ''
   form.unrestrictedAck = form.securityMode === 'unrestricted'
+  form.proxyUrl = typeof connParams.proxyUrl === 'string' ? connParams.proxyUrl : ''
   form.customParamsJson = customParamsFrom(connParams)
   form.advancedOpen =
     form.headersText !== '' ||
     form.envText !== '' ||
+    form.proxyUrl !== '' ||
     form.cwd !== '' ||
     form.customParamsJson !== ''
   form.enabled = cfg.enabled
@@ -1524,7 +1530,33 @@ function buildConnectionDraft(): { connParams: ConnParams; credential: string } 
     if (!ok) return null
   }
 
+  const proxy = form.proxyUrl.trim()
+  if (proxy !== '') {
+    const msg = validateProxyUrl(proxy)
+    if (msg !== '') {
+      fieldErrors.proxyUrl = msg
+      return null
+    }
+    connParams.proxyUrl = proxy
+  } else {
+    delete connParams.proxyUrl
+  }
+
   return { connParams, credential }
+}
+
+function validateProxyUrl(value: string): string {
+  let parsed: URL
+  try {
+    parsed = new URL(value)
+  } catch {
+    return '代理地址格式不正确，例如 socks5://127.0.0.1:1080'
+  }
+  if (!['http:', 'https:', 'socks5:', 'socks5h:'].includes(parsed.protocol)) {
+    return '代理地址需以 http://、https://、socks5:// 或 socks5h:// 开头'
+  }
+  if (parsed.hostname === '' || parsed.port === '') return '代理地址需要包含主机和端口'
+  return ''
 }
 
 function makePayload(
@@ -2501,6 +2533,23 @@ const errorClass = 'mt-1.5 text-xs text-error-500'
                   v-if="form.advancedOpen"
                   class="space-y-4 border-t border-gray-200 p-4 dark:border-gray-800"
                 >
+                  <div>
+                    <label for="up-proxy" :class="labelClass">出站代理</label>
+                    <input
+                      id="up-proxy"
+                      v-model="form.proxyUrl"
+                      type="text"
+                      autocomplete="off"
+                      :class="inputClass"
+                      placeholder="socks5://user:pass@127.0.0.1:1080"
+                    />
+                    <p :class="helpClass">
+                      这个上游的请求都走这个代理，支持 http://、https://、socks5://、socks5h://。留空则直连。
+                      <template v-if="form.transport === 'stdio'">本地进程会收到对应的代理环境变量。</template>
+                    </p>
+                    <p v-if="fieldErrors.proxyUrl" :class="errorClass">{{ fieldErrors.proxyUrl }}</p>
+                  </div>
+
                   <template v-if="form.transport === 'stdio'">
                     <div>
                       <label for="up-env" :class="labelClass">环境变量</label>

@@ -38,7 +38,7 @@ func (s *sseSession) Connect(ctx context.Context) error {
 	return s.establish(ctx, func(dialCtx context.Context) (mcpClientConn, error) {
 		transport := &mcp.SSEClientTransport{
 			Endpoint:   s.params.url,
-			HTTPClient: newAuthHTTPClient(s.credential, s.params.headers),
+			HTTPClient: newAuthHTTPClient(s.credential, s.params.headers, s.params.proxy),
 		}
 		return connectWithTimeout(dialCtx, transport)
 	})

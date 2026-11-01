@@ -3,6 +3,7 @@ package transport
 import (
 	"context"
 	"net/http"
+	"net/url"
 	"sync"
 
 	"github.com/coder/websocket"
@@ -53,6 +54,7 @@ func (s *wsSession) Connect(ctx context.Context) error {
 			endpoint:   s.params.url,
 			credential: s.credential,
 			headers:    s.params.headers,
+			proxy:      s.params.proxy,
 		}
 		return connectWithTimeout(dialCtx, transport)
 	})
@@ -64,6 +66,8 @@ type wsClientTransport struct {
 	endpoint string
 	// credential 为鉴权凭证明文，握手时以 Authorization: Bearer 头携带（Req 4.7）。
 	credential string
+	// proxy 为出站代理；nil 表示沿用环境变量。
+	proxy *url.URL
 	// headers 为握手 HTTP 请求中携带的自定义请求头。
 	headers map[string]string
 }
@@ -74,6 +78,9 @@ type wsClientTransport struct {
 // 用于驱动后续读写，使其不受连接建立超时的影响。
 func (t *wsClientTransport) Connect(ctx context.Context) (mcp.Connection, error) {
 	opts := &websocket.DialOptions{}
+	if t.proxy != nil {
+		opts.HTTPClient = &http.Client{Transport: baseTransportFor(t.proxy)}
+	}
 	if len(t.headers) > 0 || t.credential != "" {
 		opts.HTTPHeader = http.Header{}
 		resolvedHeaders := resolveStringMapCredentials(t.headers, t.credential)

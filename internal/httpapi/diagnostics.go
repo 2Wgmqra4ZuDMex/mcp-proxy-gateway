@@ -15,6 +15,7 @@ import (
 	"github.com/myGithub/mcp-proxy-gateway/internal/domain"
 	"github.com/myGithub/mcp-proxy-gateway/internal/store"
 	"github.com/myGithub/mcp-proxy-gateway/internal/syslog"
+	"github.com/myGithub/mcp-proxy-gateway/internal/transport"
 )
 
 const (
@@ -332,7 +333,11 @@ func redactConnParams(params map[string]any) map[string]any {
 	if len(params) == 0 {
 		return nil
 	}
-	return redactAnyMap(params)
+	out := redactAnyMap(params)
+	if raw, ok := out[transport.ParamProxyURL].(string); ok {
+		out[transport.ParamProxyURL] = transport.RedactProxyURL(raw)
+	}
+	return out
 }
 
 func isSensitiveKey(key string) bool {

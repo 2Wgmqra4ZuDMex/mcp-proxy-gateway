@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"syscall"
@@ -359,10 +360,11 @@ func wrapUpstreamError(err error) error {
 
 // newAuthHTTPClient 构造一个在每个请求上附带自定义请求头与鉴权凭证的 HTTP 客户端（Req 4.7）。
 //
-// 当 credential 与 headers 均为空时返回 nil，使 SDK 退回到 http.DefaultClient；否则返回包装了
+// 当 credential、headers 与 proxy 均为空时返回 nil，使 SDK 退回到 http.DefaultClient；否则返回包装了
 // authRoundTripper 的客户端。自定义 Authorization 头优先，未显式提供时再附加 Bearer 凭证。
-func newAuthHTTPClient(credential string, headers map[string]string) *http.Client {
-	if credential == "" && len(headers) == 0 {
+// proxy 非空时出站请求固定走该代理。
+func newAuthHTTPClient(credential string, headers map[string]string, proxy *url.URL) *http.Client {
+	if credential == "" && len(headers) == 0 && proxy == nil {
 		return nil
 	}
 	resolvedHeaders := resolveStringMapCredentials(headers, credential)
@@ -371,7 +373,7 @@ func newAuthHTTPClient(credential string, headers map[string]string) *http.Clien
 		autoBearerCredential = ""
 	}
 	return &http.Client{
-		Transport: &authRoundTripper{credential: autoBearerCredential, headers: resolvedHeaders, base: http.DefaultTransport},
+		Transport: &authRoundTripper{credential: autoBearerCredential, headers: resolvedHeaders, base: baseTransportFor(proxy)},
 	}
 }
 
