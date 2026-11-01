@@ -66,13 +66,13 @@ func builtinTemplates() []Template {
 			ID:        "brave-search",
 			Name:      "Brave Search 搜索",
 			Category:  CategorySearch,
-			Summary:   "接入 Brave Search API，提供网页搜索与本地商家检索能力，需提供 Brave Search API Key。",
-			DocURL:    "https://github.com/modelcontextprotocol/servers/tree/main/src/brave-search",
+			Summary:   "接入 Brave 官方 MCP，提供网页、新闻、图片、视频、地点搜索与 AI 摘要能力，需提供 Brave Search API Key。",
+			DocURL:    "https://github.com/brave/brave-search-mcp-server",
 			Transport: domain.TransportStdio,
 			PresetParams: map[string]any{
 				"command": "npx",
 				"args": []any{
-					"-y", "@modelcontextprotocol/server-brave-search",
+					"-y", "@brave/brave-search-mcp-server", "--transport", "stdio",
 				},
 				"env": map[string]any{
 					"BRAVE_API_KEY": "${apiKey}",
