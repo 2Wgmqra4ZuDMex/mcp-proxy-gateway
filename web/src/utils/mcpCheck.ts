@@ -96,6 +96,8 @@ export function buildProbeArgs(schema: unknown): Record<string, unknown> {
   for (const name of s.required ?? []) {
     args[name] = sampleValue(name, props[name] ?? {})
   }
+  // 有的工具把 url 设为“与其他字段二选一”，不在 required 里但实际必须提供。
+  if (props.url !== undefined && args.url === undefined) args.url = sampleString('url')
   for (const field of LIMIT_FIELDS) {
     const prop = props[field]
     if (prop === undefined) continue

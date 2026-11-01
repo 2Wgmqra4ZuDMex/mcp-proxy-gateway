@@ -40,3 +40,17 @@ test('buildProbeArgs fills required fields and minimises result counts', () => {
 test('buildProbeArgs tolerates missing schema', () => {
   assert.deepEqual(buildProbeArgs(undefined), {})
 })
+
+test('buildProbeArgs always provides url when the tool accepts one', () => {
+  assert.deepEqual(
+    buildProbeArgs({
+      properties: {
+        url: { type: 'string' },
+        alexandria: { type: 'string' },
+        objective: { type: 'string' },
+      },
+      required: ['objective'],
+    }),
+    { objective: 'test', url: 'https://example.com' },
+  )
+})
