@@ -69,9 +69,11 @@ import {
   groupUpstreamsByTag,
   type UpstreamTagFilter,
 } from '@/utils/upstreamTags'
-import { ChevronDownIcon, ListIcon, FolderIcon } from '@/icons'
+import { ChevronDownIcon, ListIcon, FolderIcon, UserGroupIcon } from '@/icons'
+import { listOutboundProxies, type OutboundProxy } from '@/api/outboundProxies'
+import { groupUpstreamsByAccount, nextAccountName, summarizeAccountGroup } from '@/utils/accountGroups'
 
-type UpstreamViewMode = 'list' | 'group'
+type UpstreamViewMode = 'account' | 'list' | 'group'
 
 const { pageSize } = useBreakpoint()
 const toast = useToast()
@@ -92,7 +94,7 @@ const searchKeyword = ref('')
 /** 标签筛选：all | untagged | 具体标签。 */
 const selectedTagFilter = ref<UpstreamTagFilter>('all')
 /** 展示模式：列表 / 分组。 */
-const viewMode = ref<UpstreamViewMode>('list')
+const viewMode = ref<UpstreamViewMode>('account')
 /** 分组视图中折叠的分区 key。 */
 const collapsedGroupKeys = ref<Set<string>>(new Set())
 
@@ -218,6 +220,115 @@ const groupedUpstreams = computed(() => {
   }
   return groupUpstreamsByTag(list)
 })
+/** 账号组视图：同一服务的多个账号（tavily01…）归为一组，多账号组默认收起。 */
+const accountGroups = computed(() =>
+  groupUpstreamsByAccount(filteredUpstreams.value).map((group) => ({ ...group, tag: group.label as string | null })),
+)
+const expandedAccountKeys = ref<Set<string>>(new Set())
+const displayGroups = computed(() => (viewMode.value === 'account' ? accountGroups.value : groupedUpstreams.value))
+const outboundProxies = ref<OutboundProxy[]>([])
+
+type DisplayGroup = { key: string; label: string; tag: string | null; items: Upstream[] }
+
+function proxyNameOf(id: string): string {
+  return outboundProxies.value.find((item) => item.id === id)?.name ?? '未知代理'
+}
+
+function accountSummary(group: DisplayGroup) {
+  return summarizeAccountGroup(group.items, proxyNameOf)
+}
+
+function groupToolCount(group: DisplayGroup): string {
+  const counts = group.items.map((up) => toolCounts.value[up.id]).filter((item) => item?.synced)
+  if (counts.length === 0) return '工具 —'
+  return `工具 ${Math.max(...counts.map((item) => item!.count))}`
+}
+
+function isAccountMode(): boolean {
+  return viewMode.value === 'account'
+}
+
+function isSectionCollapsed(group: DisplayGroup): boolean {
+  if (isAccountMode()) return group.items.length > 1 && !expandedAccountKeys.value.has(group.key)
+  return isGroupCollapsed(group.key)
+}
+
+function toggleSection(group: DisplayGroup): void {
+  if (!isAccountMode()) {
+    toggleGroupCollapsed(group.key)
+    return
+  }
+  const next = new Set(expandedAccountKeys.value)
+  if (next.has(group.key)) next.delete(group.key)
+  else next.add(group.key)
+  expandedAccountKeys.value = next
+}
+
+/** 添加账号：复制本组第一个账号的配置，自动命名为下一个编号，只需填写新的 Key。 */
+function addAccount(group: DisplayGroup): void {
+  const source = group.items[0]
+  if (source === undefined) return
+  clearDrawerSources()
+  cloneSource.value = source
+  cloneName.value = nextAccountName(
+    group.label,
+    group.items.map((item) => item.config.name),
+    upstreams.value.map((item) => item.config.name),
+  )
+  drawerOpen.value = true
+}
+
+async function refreshGroup(group: DisplayGroup): Promise<void> {
+  const key = `${group.key}:refresh`
+  if (busy.value.has(key)) return
+  setBusy(key, true)
+  let ok = 0
+  const failed: string[] = []
+  try {
+    for (const up of group.items.filter((item) => item.config.enabled)) {
+      try {
+        const count = await refreshUpstream(up.id)
+        toolCounts.value = { ...toolCounts.value, [up.id]: buildToolCountSnapshot(count, new Date().toISOString()) }
+        ok += 1
+      } catch {
+        failed.push(up.config.name)
+      }
+    }
+    if (failed.length === 0) toast.success(`已刷新「${group.label}」${ok} 个账号`)
+    else toast.error(`「${group.label}」刷新成功 ${ok} 个，失败：${failed.join('、')}`)
+    await loadUpstreams(false)
+  } finally {
+    setBusy(key, false)
+  }
+}
+
+async function setGroupEnabled(group: DisplayGroup, enabled: boolean): Promise<void> {
+  const targets = group.items.filter((item) => item.config.enabled !== enabled)
+  if (targets.length === 0) return
+  const accepted = await confirm({
+    title: enabled ? '确认启用整组' : '确认停用整组',
+    message: enabled
+      ? `将启用「${group.label}」中的 ${targets.length} 个账号。`
+      : `将停用「${group.label}」中的 ${targets.length} 个账号，停用后它们不再参与轮询。`,
+    confirmText: enabled ? '启用' : '停用',
+    tone: enabled ? 'info' : 'warning',
+  })
+  if (!accepted) return
+  const key = `${group.key}:toggle`
+  setBusy(key, true)
+  try {
+    for (const up of targets) await setUpstreamEnabled(up.id, enabled)
+    toast.success(`已${enabled ? '启用' : '停用'}「${group.label}」${targets.length} 个账号`)
+    await loadUpstreams(false)
+    if (enabled) ensureStatusPolling(45_000)
+  } catch (err) {
+    showError(err, '操作失败')
+    await loadUpstreams(false)
+  } finally {
+    setBusy(key, false)
+  }
+}
+
 const upstreamCountLabel = computed(() => {
   const total = upstreams.value.length
   const matched = filteredUpstreams.value.length
@@ -551,7 +662,7 @@ async function loadUpstreams(showLoading = true): Promise<void> {
     list.sort((a, b) => a.config.sortOrder - b.config.sortOrder)
     upstreams.value = list
     syncRecoverySchedules(list)
-    await loadToolCounts(list)
+    await Promise.all([loadToolCounts(list), loadOutboundProxyNames()])
     if (currentPage.value > totalPages.value) currentPage.value = totalPages.value
     if (hasRecoveringUpstream.value) ensureStatusPolling(60_000)
   } catch (err) {
@@ -566,6 +677,14 @@ onUnmounted(() => {
   stopStatusPolling()
   stopRecoveryClock()
 })
+
+async function loadOutboundProxyNames(): Promise<void> {
+  try {
+    outboundProxies.value = await listOutboundProxies()
+  } catch {
+    // 出口汇总仅为辅助信息。
+  }
+}
 
 async function loadToolCounts(list: Upstream[]): Promise<void> {
   const next = { ...toolCounts.value }
@@ -1146,6 +1265,20 @@ function goPage(p: number): void {
             type="button"
             class="inline-flex h-9 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium transition"
             :class="
+              viewMode === 'account'
+                ? 'bg-brand-500 text-white shadow-sm'
+                : 'text-gray-600 hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-gray-800'
+            "
+            :aria-pressed="viewMode === 'account'"
+            @click="setViewMode('account')"
+          >
+            <UserGroupIcon class="h-4 w-4" aria-hidden="true" />
+            账号组
+          </button>
+          <button
+            type="button"
+            class="inline-flex h-9 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium transition"
+            :class="
               viewMode === 'list'
                 ? 'bg-brand-500 text-white shadow-sm'
                 : 'text-gray-600 hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-gray-800'
@@ -1168,7 +1301,7 @@ function goPage(p: number): void {
             @click="setViewMode('group')"
           >
             <FolderIcon class="h-4 w-4" aria-hidden="true" />
-            分组
+            按标签
           </button>
         </div>
         <button
@@ -1565,45 +1698,119 @@ function goPage(p: number): void {
       <!-- 分组视图 -->
       <div v-else class="space-y-4">
         <section
-          v-for="group in groupedUpstreams"
+          v-for="group in displayGroups"
           :key="group.key"
           class="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm dark:border-gray-800 dark:bg-white/[0.03]"
         >
-          <button
-            type="button"
-            class="flex w-full items-center justify-between gap-3 border-b border-gray-100 px-4 py-3 text-left transition hover:bg-gray-50/80 sm:px-5 dark:border-gray-800 dark:hover:bg-white/[0.04]"
-            :aria-expanded="!isGroupCollapsed(group.key)"
-            @click="toggleGroupCollapsed(group.key)"
+          <div
+            class="flex flex-col gap-2 border-b border-gray-100 px-4 py-3 sm:px-5 lg:flex-row lg:items-center dark:border-gray-800"
           >
-            <div class="flex min-w-0 items-center gap-2.5">
-              <span
-                class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg"
-                :class="
-                  group.tag === null
-                    ? 'bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400'
-                    : 'bg-brand-50 text-brand-600 dark:bg-brand-500/10 dark:text-brand-300'
-                "
-              >
-                <FolderIcon class="h-4 w-4" aria-hidden="true" />
-              </span>
-              <div class="min-w-0">
-                <div class="truncate text-sm font-semibold text-gray-800 dark:text-white/90">
-                  {{ group.label }}
+            <button
+              type="button"
+              class="flex min-w-0 flex-1 items-center justify-between gap-3 rounded-lg text-left transition"
+              :aria-expanded="!isSectionCollapsed(group)"
+              @click="toggleSection(group)"
+            >
+              <div class="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1.5">
+                <span
+                  class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg"
+                  :class="
+                    group.tag === null
+                      ? 'bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400'
+                      : 'bg-brand-50 text-brand-600 dark:bg-brand-500/10 dark:text-brand-300'
+                  "
+                >
+                  <UserGroupIcon v-if="viewMode === 'account'" class="h-4 w-4" aria-hidden="true" />
+                  <FolderIcon v-else class="h-4 w-4" aria-hidden="true" />
+                </span>
+                <div class="min-w-0">
+                  <div class="truncate text-sm font-semibold text-gray-800 dark:text-white/90">
+                    {{ group.label }}
+                  </div>
+                  <div class="text-xs text-gray-400 dark:text-gray-500">
+                    {{ group.items.length }} {{ viewMode === 'account' ? '个账号' : '个上游' }}
+                  </div>
                 </div>
-                <div class="text-xs text-gray-400 dark:text-gray-500">
-                  {{ group.items.length }} 个上游
-                </div>
+                <template v-if="viewMode === 'account'">
+                  <span class="flex items-center gap-1" aria-hidden="true">
+                    <i
+                      v-for="up in group.items"
+                      :key="`dot:${up.id}`"
+                      class="inline-block h-2 w-2 rounded-full"
+                      :class="
+                        !up.config.enabled
+                          ? 'bg-gray-300 dark:bg-gray-600'
+                          : up.state === 'available'
+                            ? 'bg-success-500'
+                            : up.state === 'connecting'
+                              ? 'bg-blue-light-500'
+                              : 'bg-error-500'
+                      "
+                    ></i>
+                  </span>
+                  <span
+                    v-if="accountSummary(group).available > 0"
+                    class="bg-success-50 text-success-700 dark:bg-success-500/10 dark:text-success-400 rounded-full px-2 py-0.5 text-xs font-medium"
+                    >{{ accountSummary(group).available }} 可用</span
+                  >
+                  <span
+                    v-if="accountSummary(group).unavailable > 0"
+                    class="bg-error-50 text-error-700 dark:bg-error-500/10 dark:text-error-400 rounded-full px-2 py-0.5 text-xs font-medium"
+                    >{{ accountSummary(group).unavailable }} 不可用</span
+                  >
+                  <span
+                    v-if="accountSummary(group).disabled > 0"
+                    class="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-500 dark:bg-white/5 dark:text-gray-400"
+                    >{{ accountSummary(group).disabled }} 已停用</span
+                  >
+                  <span class="text-xs text-gray-400 dark:text-gray-500">
+                    {{ groupToolCount(group) }} · 出口：{{ accountSummary(group).egress.join('、') }}
+                  </span>
+                </template>
               </div>
+              <ChevronDownIcon
+                v-if="viewMode !== 'account' || group.items.length > 1"
+                class="h-4 w-4 shrink-0 text-gray-400 transition-transform duration-200"
+                :class="isSectionCollapsed(group) ? '-rotate-90' : 'rotate-0'"
+                aria-hidden="true"
+              />
+            </button>
+            <div
+              v-if="viewMode === 'account'"
+              class="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-1 pl-10 text-xs font-medium lg:pl-0"
+            >
+              <button
+                type="button"
+                class="text-brand-600 dark:text-brand-400 transition hover:underline"
+                @click="addAccount(group)"
+              >
+                ＋ 添加账号
+              </button>
+              <button
+                type="button"
+                class="text-gray-600 transition hover:underline disabled:opacity-50 dark:text-gray-300"
+                :disabled="isBusy(group.key, 'refresh') || accountSummary(group).allDisabled"
+                @click="refreshGroup(group)"
+              >
+                {{ isBusy(group.key, 'refresh') ? '刷新中…' : group.items.length > 1 ? '全部刷新' : '刷新' }}
+              </button>
+              <button
+                type="button"
+                class="text-gray-600 transition hover:underline disabled:opacity-50 dark:text-gray-300"
+                :disabled="isBusy(group.key, 'toggle')"
+                @click="setGroupEnabled(group, accountSummary(group).allDisabled)"
+              >
+                {{
+                  accountSummary(group).allDisabled
+                    ? group.items.length > 1 ? '全部启用' : '启用'
+                    : group.items.length > 1 ? '全部停用' : '停用'
+                }}
+              </button>
             </div>
-            <ChevronDownIcon
-              class="h-4 w-4 shrink-0 text-gray-400 transition-transform duration-200"
-              :class="isGroupCollapsed(group.key) ? '-rotate-90' : 'rotate-0'"
-              aria-hidden="true"
-            />
-          </button>
+          </div>
 
           <div
-            v-show="!isGroupCollapsed(group.key)"
+            v-show="!isSectionCollapsed(group)"
             class="grid grid-cols-1 gap-4 p-4 sm:grid-cols-2 sm:p-5 xl:grid-cols-3"
           >
             <div
