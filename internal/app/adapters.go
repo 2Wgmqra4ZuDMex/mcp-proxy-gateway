@@ -92,7 +92,6 @@ type riskProfileReaderAdapter struct {
 
 type riskCatalogObserver struct {
 	repo       *store.ToolRiskRepo
-	governance *risk.GovernanceService
 	invalidate func()
 }
 
@@ -103,9 +102,6 @@ func (o riskCatalogObserver) ToolsReplaced(ctx context.Context, upstreamID strin
 	}
 	if o.invalidate != nil {
 		o.invalidate()
-	}
-	if o.governance != nil {
-		return o.governance.TriggerAutoAssessment(ctx)
 	}
 	return nil
 }

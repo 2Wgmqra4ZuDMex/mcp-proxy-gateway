@@ -145,11 +145,6 @@ const allMenuGroups = [
         path: '/tools',
       },
       {
-        icon: ErrorHexaIcon,
-        name: 'AI 风险治理',
-        path: '/ai-risk',
-      },
-      {
         icon: ListIcon,
         name: '规则管理',
         path: '/rules',

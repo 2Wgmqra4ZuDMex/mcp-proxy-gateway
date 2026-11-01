@@ -163,15 +163,6 @@ func (a *App) build(envCfg config.EnvConfig) error {
 	}
 	a.auditSvc = auditSvc
 	a.auditRecorder = audit.NewRecorder(repos.Audit, audit.WithLogger(a.logger))
-	riskGovernance := risk.NewGovernanceService(
-		repos.AIProvider,
-		repos.ToolRisk,
-		repos.RiskJob,
-		risk.WithCatalogChangeObserver(agg.InvalidateToolSetCache),
-	)
-	if err := riskGovernance.Resume(context.Background()); err != nil {
-		return err
-	}
 
 	// --- 同步服务：工具拉取、周期同步与 cron 调度（Req 6、7）---
 	fetcher := &toolFetcher{
@@ -183,7 +174,7 @@ func (a *App) build(envCfg config.EnvConfig) error {
 	a.syncTimeout = syncTimeout
 	a.syncer = syncsvc.NewPeriodicSyncer(fetcher, invalidatingToolCache, mgr, syncTimeout, a.logger)
 	refresher := syncsvc.NewRefresher(fetcher, invalidatingToolCache, syncTimeout, a.logger)
-	catalogObserver := riskCatalogObserver{repo: repos.ToolRisk, governance: riskGovernance, invalidate: agg.InvalidateToolSetCache}
+	catalogObserver := riskCatalogObserver{repo: repos.ToolRisk, invalidate: agg.InvalidateToolSetCache}
 	a.syncer.SetObserver(catalogObserver)
 	refresher.SetObserver(catalogObserver)
 	a.scheduler = syncsvc.NewScheduler()
@@ -259,7 +250,6 @@ func (a *App) build(envCfg config.EnvConfig) error {
 		APIKeyUpstreams: upstreamAccessMgr,
 		ACLStore:        repos.ACL,
 		RateLimitStore:  repos.APIKey,
-		AIRisk:          riskGovernance,
 		ToolRiskStore:   repos.ToolRisk,
 		Auth:            authSvc,
 		Settings:        a.cfg,

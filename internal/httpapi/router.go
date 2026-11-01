@@ -175,22 +175,6 @@ type APIKeyUpstreamAccessService interface {
 	Set(ctx context.Context, apiKeyID string, cfg apikey.UpstreamAccessConfig) (apikey.UpstreamAccessConfig, error)
 }
 
-type AIRiskService interface {
-	ListProviders(context.Context) ([]risk.Provider, error)
-	GetProvider(context.Context, string) (risk.Provider, error)
-	CreateProvider(context.Context, risk.ProviderInput) (risk.Provider, error)
-	UpdateProvider(context.Context, string, risk.ProviderInput) (risk.Provider, error)
-	DeleteProvider(context.Context, string) error
-	ActivateProvider(context.Context, string) error
-	TestProvider(context.Context, string) (risk.ProviderTestResult, error)
-	QueueAssessment(context.Context, int) (risk.AssessmentJob, error)
-	QueueReviewAssessment(context.Context, int) (risk.AssessmentJob, error)
-	ListJobs(context.Context, int) ([]risk.AssessmentJob, error)
-	GetJob(context.Context, string) (risk.AssessmentJob, error)
-	CancelJob(context.Context, string) error
-	ReassessTool(context.Context, string, string) (risk.Assessment, error)
-}
-
 type ToolRiskStore interface {
 	Get(context.Context, string, string) (risk.Assessment, error)
 	List(context.Context, store.RiskListQuery) (store.RiskListResult, error)
@@ -391,7 +375,6 @@ type Router struct {
 	aclStore ACLStore
 	// rateLimitStore 为 API Key 限流配置仓储。
 	rateLimitStore RateLimitStore
-	aiRisk         AIRiskService
 	toolRiskStore  ToolRiskStore
 	// auth 为管理员认证应用服务（注册/登录/改密）。
 	auth AuthService
@@ -485,7 +468,6 @@ type Deps struct {
 	APIKeyUpstreams APIKeyUpstreamAccessService
 	ACLStore        ACLStore
 	RateLimitStore  RateLimitStore
-	AIRisk          AIRiskService
 	ToolRiskStore   ToolRiskStore
 	Auth            AuthService
 	Settings        SettingsService
@@ -520,7 +502,6 @@ func NewRouter(d Deps) *Router {
 		apiKeyUpstreams: d.APIKeyUpstreams,
 		aclStore:        d.ACLStore,
 		rateLimitStore:  d.RateLimitStore,
-		aiRisk:          d.AIRisk,
 		toolRiskStore:   d.ToolRiskStore,
 		auth:            d.Auth,
 		settings:        d.Settings,

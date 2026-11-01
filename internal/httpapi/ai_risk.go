@@ -2,7 +2,6 @@ package httpapi
 
 import (
 	"context"
-	"net/http"
 	"strconv"
 	"time"
 
@@ -32,160 +31,22 @@ type bulkOverrideRequest struct {
 	Force  bool       `json:"force"`
 }
 
-// aiProviderListItem is deliberately separate from risk.Provider so the list
-// endpoint never sends API credentials. The full configuration remains
-// available from GET /providers/:id when an administrator opens the editor.
-type aiProviderListItem struct {
-	ID       string        `json:"id"`
-	Name     string        `json:"name"`
-	BaseURL  string        `json:"baseUrl"`
-	APIStyle risk.APIStyle `json:"apiStyle"`
-	Model    string        `json:"model"`
-	Enabled  bool          `json:"enabled"`
-	Active   bool          `json:"active"`
-	TimeoutS int           `json:"timeoutS"`
-}
-
-func newAIProviderListItem(provider risk.Provider) aiProviderListItem {
-	return aiProviderListItem{
-		ID: provider.ID, Name: provider.Name, BaseURL: provider.BaseURL, APIStyle: provider.APIStyle,
-		Model: provider.Model, Enabled: provider.Enabled, Active: provider.Active,
-		TimeoutS: provider.TimeoutS,
-	}
-}
-
-type providerTestResponse struct {
-	OK           bool   `json:"ok"`
-	LatencyMS    int64  `json:"latencyMs"`
-	InputTokens  *int64 `json:"inputTokens,omitempty"`
-	OutputTokens *int64 `json:"outputTokens,omitempty"`
-	TotalTokens  *int64 `json:"totalTokens,omitempty"`
-}
-
 func (r *Router) registerAIRiskRoutes(g *gin.RouterGroup) {
 	group := g.Group("/ai-risk")
-	group.GET("/providers", r.listAIProviders)
-	group.POST("/providers", r.createAIProvider)
-	group.GET("/providers/:id", r.getAIProvider)
-	group.PUT("/providers/:id", r.updateAIProvider)
-	group.DELETE("/providers/:id", r.deleteAIProvider)
-	group.POST("/providers/:id/activate", r.activateAIProvider)
-	group.POST("/providers/:id/test", r.testAIProvider)
 	group.GET("/tools", r.listRiskTools)
 	group.POST("/tools/bulk-override", r.bulkRiskOverride)
 	group.GET("/tools/:upstreamId/:originalName", r.getRiskTool)
-	group.POST("/tools/:upstreamId/:originalName/reassess", r.reassessRiskTool)
 	group.PUT("/tools/:upstreamId/:originalName/manual-override", r.setRiskOverride)
 	group.DELETE("/tools/:upstreamId/:originalName/manual-override", r.clearRiskOverride)
 	group.POST("/reconcile", r.reconcileRiskCatalog)
-	group.POST("/assess", r.assessRiskCatalog)
-	group.POST("/assess/review", r.assessNeedsReviewCatalog)
-	group.GET("/jobs", r.listRiskJobs)
-	group.GET("/jobs/:id", r.getRiskJob)
-	group.POST("/jobs/:id/cancel", r.cancelRiskJob)
 }
 
 func (r *Router) requireAIRisk(c *gin.Context) bool {
-	if r.aiRisk == nil || r.toolRiskStore == nil {
-		respondServiceUnavailable(c, "AI 风险治理服务未就绪")
+	if r.toolRiskStore == nil {
+		respondServiceUnavailable(c, "工具风险服务未就绪")
 		return false
 	}
 	return true
-}
-
-func (r *Router) listAIProviders(c *gin.Context) {
-	if !r.requireAIRisk(c) {
-		return
-	}
-	items, err := r.aiRisk.ListProviders(c.Request.Context())
-	if err != nil {
-		respondError(c, err)
-		return
-	}
-	result := make([]aiProviderListItem, 0, len(items))
-	for _, item := range items {
-		result = append(result, newAIProviderListItem(item))
-	}
-	respondOK(c, gin.H{"providers": result})
-}
-func (r *Router) getAIProvider(c *gin.Context) {
-	if !r.requireAIRisk(c) {
-		return
-	}
-	item, err := r.aiRisk.GetProvider(c.Request.Context(), c.Param("id"))
-	if err != nil {
-		respondError(c, err)
-		return
-	}
-	respondOK(c, item)
-}
-func (r *Router) createAIProvider(c *gin.Context) {
-	if !r.requireAIRisk(c) {
-		return
-	}
-	var req risk.ProviderInput
-	if !bindJSON(c, &req) {
-		return
-	}
-	item, err := r.aiRisk.CreateProvider(c.Request.Context(), req)
-	if err != nil {
-		respondError(c, err)
-		return
-	}
-	r.recordCreate(c, audit.ResourceSetting, item.ID)
-	respondCreated(c, item)
-}
-func (r *Router) updateAIProvider(c *gin.Context) {
-	if !r.requireAIRisk(c) {
-		return
-	}
-	var req risk.ProviderInput
-	if !bindJSON(c, &req) {
-		return
-	}
-	item, err := r.aiRisk.UpdateProvider(c.Request.Context(), c.Param("id"), req)
-	if err != nil {
-		respondError(c, err)
-		return
-	}
-	r.recordUpdate(c, audit.ResourceSetting, item.ID)
-	respondOK(c, item)
-}
-func (r *Router) deleteAIProvider(c *gin.Context) {
-	if !r.requireAIRisk(c) {
-		return
-	}
-	if err := r.aiRisk.DeleteProvider(c.Request.Context(), c.Param("id")); err != nil {
-		respondError(c, err)
-		return
-	}
-	r.recordDelete(c, audit.ResourceSetting, c.Param("id"))
-	respondNoContent(c)
-}
-func (r *Router) activateAIProvider(c *gin.Context) {
-	if !r.requireAIRisk(c) {
-		return
-	}
-	if err := r.aiRisk.ActivateProvider(c.Request.Context(), c.Param("id")); err != nil {
-		respondError(c, err)
-		return
-	}
-	r.recordUpdate(c, audit.ResourceSetting, c.Param("id"))
-	respondOK(c, gin.H{"id": c.Param("id"), "active": true})
-}
-func (r *Router) testAIProvider(c *gin.Context) {
-	if !r.requireAIRisk(c) {
-		return
-	}
-	result, err := r.aiRisk.TestProvider(c.Request.Context(), c.Param("id"))
-	if err != nil {
-		respondError(c, err)
-		return
-	}
-	respondOK(c, providerTestResponse{
-		OK: true, LatencyMS: result.LatencyMS,
-		InputTokens: result.InputTokens, OutputTokens: result.OutputTokens, TotalTokens: result.TotalTokens,
-	})
 }
 
 func (r *Router) listRiskTools(c *gin.Context) {
@@ -244,21 +105,6 @@ func (r *Router) getRiskTool(c *gin.Context) {
 	items := []risk.Assessment{item}
 	r.attachRiskUpstreamNames(c.Request.Context(), items)
 	item = items[0]
-	respondOK(c, item)
-}
-func (r *Router) reassessRiskTool(c *gin.Context) {
-	if !r.requireAIRisk(c) {
-		return
-	}
-	item, err := r.aiRisk.ReassessTool(c.Request.Context(), c.Param("upstreamId"), c.Param("originalName"))
-	if err != nil {
-		respondError(c, err)
-		return
-	}
-	items := []risk.Assessment{item}
-	r.attachRiskUpstreamNames(c.Request.Context(), items)
-	item = items[0]
-	r.recordUpdate(c, audit.ResourceSetting, item.ID)
 	respondOK(c, item)
 }
 func (r *Router) bulkRiskOverride(c *gin.Context) {
@@ -344,68 +190,4 @@ func (r *Router) reconcileRiskCatalog(c *gin.Context) {
 	r.invalidateToolSetCache()
 	r.recordUpdate(c, audit.ResourceSetting, "ai-risk-reconcile")
 	respondOK(c, total)
-}
-func (r *Router) assessRiskCatalog(c *gin.Context) {
-	if !r.requireAIRisk(c) {
-		return
-	}
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "500"))
-	result, err := r.aiRisk.QueueAssessment(c.Request.Context(), limit)
-	if err != nil {
-		respondError(c, err)
-		return
-	}
-	r.recordCreate(c, audit.ResourceSetting, "ai-risk-assessment")
-	c.Status(http.StatusAccepted)
-	respondOK(c, result)
-}
-
-func (r *Router) assessNeedsReviewCatalog(c *gin.Context) {
-	if !r.requireAIRisk(c) {
-		return
-	}
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "500"))
-	result, err := r.aiRisk.QueueReviewAssessment(c.Request.Context(), limit)
-	if err != nil {
-		respondError(c, err)
-		return
-	}
-	r.recordCreate(c, audit.ResourceSetting, "ai-risk-review-reassessment")
-	c.Status(http.StatusAccepted)
-	respondOK(c, result)
-}
-
-func (r *Router) listRiskJobs(c *gin.Context) {
-	if !r.requireAIRisk(c) {
-		return
-	}
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
-	items, err := r.aiRisk.ListJobs(c.Request.Context(), limit)
-	if err != nil {
-		respondError(c, err)
-		return
-	}
-	respondOK(c, gin.H{"jobs": items})
-}
-func (r *Router) getRiskJob(c *gin.Context) {
-	if !r.requireAIRisk(c) {
-		return
-	}
-	item, err := r.aiRisk.GetJob(c.Request.Context(), c.Param("id"))
-	if err != nil {
-		respondError(c, err)
-		return
-	}
-	respondOK(c, item)
-}
-func (r *Router) cancelRiskJob(c *gin.Context) {
-	if !r.requireAIRisk(c) {
-		return
-	}
-	if err := r.aiRisk.CancelJob(c.Request.Context(), c.Param("id")); err != nil {
-		respondError(c, err)
-		return
-	}
-	r.recordUpdate(c, audit.ResourceSetting, c.Param("id"))
-	respondOK(c, gin.H{"id": c.Param("id"), "status": risk.JobCancelled})
 }
