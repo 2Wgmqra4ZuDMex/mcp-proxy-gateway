@@ -78,6 +78,30 @@ type ToolResult struct {
 	Content json.RawMessage `json:"content"`
 }
 
+// UpstreamCheckProbe 为上游检测时的真实调用：调用 Tool 并传入 Args，用于确认凭证有效。
+type UpstreamCheckProbe struct {
+	Tool string          `json:"tool"`
+	Args json.RawMessage `json:"args"`
+}
+
+// UpstreamCallCheck 为检测调用的结果。OK 表示调用成功且上游未返回错误结果。
+type UpstreamCallCheck struct {
+	Tool      string `json:"tool"`
+	OK        bool   `json:"ok"`
+	IsError   bool   `json:"isError"`
+	LatencyMS int64  `json:"latencyMs"`
+	Message   string `json:"message,omitempty"`
+	Preview   string `json:"preview,omitempty"`
+}
+
+// UpstreamCheckResult 为单个已保存上游的检测结果：连接与工具列表，以及可选的真实调用。
+type UpstreamCheckResult struct {
+	UpstreamID string             `json:"upstreamId"`
+	Name       string             `json:"name"`
+	Connect    UpstreamTestResult `json:"connect"`
+	Call       *UpstreamCallCheck `json:"call,omitempty"`
+}
+
 type ToolResultCacheStats struct {
 	Entries       int        `json:"entries"`
 	MaxEntries    int        `json:"maxEntries"`

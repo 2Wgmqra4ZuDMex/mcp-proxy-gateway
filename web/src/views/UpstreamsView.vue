@@ -249,7 +249,7 @@ function isAccountMode(): boolean {
 }
 
 function isSectionCollapsed(group: DisplayGroup): boolean {
-  if (isAccountMode()) return group.items.length > 1 && !expandedAccountKeys.value.has(group.key)
+  if (isAccountMode()) return !expandedAccountKeys.value.has(group.key)
   return isGroupCollapsed(group.key)
 }
 
@@ -1769,7 +1769,6 @@ function goPage(p: number): void {
                 </template>
               </div>
               <ChevronDownIcon
-                v-if="viewMode !== 'account' || group.items.length > 1"
                 class="h-4 w-4 shrink-0 text-gray-400 transition-transform duration-200"
                 :class="isSectionCollapsed(group) ? '-rotate-90' : 'rotate-0'"
                 aria-hidden="true"

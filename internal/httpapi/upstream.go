@@ -84,6 +84,7 @@ func (r *Router) registerUpstreamRoutes(g *gin.RouterGroup) {
 	ups.GET("", r.listUpstreams)
 	ups.POST("", r.createUpstream)
 	ups.POST("/test", r.testUpstream)
+	ups.POST("/:id/check", r.checkUpstream)
 	ups.POST("/import/preview", r.previewUpstreamImport)
 	ups.POST("/import", r.importUpstreams)
 	ups.GET("/export/mcp-json", r.exportUpstreamsMCPJSON)
@@ -128,6 +129,41 @@ func (r *Router) testUpstream(c *gin.Context) {
 		return
 	}
 	respondOK(c, result)
+}
+
+type upstreamCheckRequest struct {
+	Probe *domain.UpstreamCheckProbe `json:"probe"`
+}
+
+// checkUpstream 用已保存配置检测某个上游：连接与工具列表，可选真实调用一次以确认凭证有效。
+func (r *Router) checkUpstream(c *gin.Context) {
+	if r.upstreamChecker == nil || r.upstream == nil {
+		respondServiceUnavailable(c, "上游检测服务未就绪")
+		return
+	}
+	var req upstreamCheckRequest
+	if !bindJSON(c, &req) {
+		return
+	}
+	ups, err := r.upstream.List(c.Request.Context())
+	if err != nil {
+		respondError(c, err)
+		return
+	}
+	id := c.Param("id")
+	for _, up := range ups {
+		if up.ID != id {
+			continue
+		}
+		result, err := r.upstreamChecker.Check(c.Request.Context(), id, up.Config, req.Probe)
+		if err != nil {
+			respondError(c, err)
+			return
+		}
+		respondOK(c, result)
+		return
+	}
+	respondError(c, domain.NewError(domain.CodeNotFound, "上游 MCP 不存在"))
 }
 
 // createUpstream 创建上游 MCP 服务（Req 2.1）。

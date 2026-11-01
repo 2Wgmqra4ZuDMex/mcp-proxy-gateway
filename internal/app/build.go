@@ -257,6 +257,7 @@ func (a *App) build(envCfg config.EnvConfig) error {
 		ToolCache:       toolCache,
 		CacheEnsurer:    a.syncer,
 		UpstreamTester:  upstreamTester{factory: factory},
+		UpstreamChecker: upstreamTester{factory: factory},
 		Aggregation:     agg,
 		RuleValidator:   ruleEngine,
 		AliasStore:      repos.Alias,

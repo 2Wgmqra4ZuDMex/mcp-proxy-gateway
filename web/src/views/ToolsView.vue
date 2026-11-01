@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { serviceNameOf } from '@/utils/toolAccessGroups'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AdminLayout from '@/components/layout/AdminLayout.vue'
@@ -121,13 +122,46 @@ const apiKeySelectOptions = computed(() => [
   })),
 ])
 
-const upstreamFilterOptions = computed(() => [
-  { value: '', label: '全部上游' },
-  ...upstreamOptions.value.map((upstream) => ({
-    value: upstream.id,
-    label: upstream.name,
-  })),
-])
+/** 来源筛选按服务分组（tavily01…06 → tavily），与上游页账号组一致。 */
+const SERVICE_FILTER_PREFIX = 'svc:'
+const serviceOptions = computed(() => {
+  const map = new Map<string, { label: string; count: number }>()
+  for (const upstream of upstreamOptions.value) {
+    const label = serviceNameOf(upstream.name)
+    const key = label.toLowerCase()
+    const entry = map.get(key) ?? { label, count: 0 }
+    entry.count += 1
+    map.set(key, entry)
+  }
+  return Array.from(map.entries())
+    .map(([key, value]) => ({ key, ...value }))
+    .sort((a, b) => a.label.localeCompare(b.label, 'zh-CN'))
+})
+
+const upstreamFilterOptions = computed(() => {
+  const options = [
+    { value: '', label: '全部服务', description: undefined as string | undefined },
+    ...serviceOptions.value.map((service) => ({
+      value: SERVICE_FILTER_PREFIX + service.key,
+      label: service.label,
+      description: service.count > 1 ? `${service.count} 个账号` : undefined,
+    })),
+  ]
+  // 从其他页面带入的单个上游筛选仍然保留为一个选项，避免下拉显示空白。
+  const current = selectedUpstream.value
+  if (current !== '' && !current.startsWith(SERVICE_FILTER_PREFIX)) {
+    const name = upstreamOptions.value.find((item) => item.id === current)?.name
+    if (name) options.push({ value: current, label: name, description: '单个上游' })
+  }
+  return options
+})
+
+function sourceMatchesFilter(source: { upstreamId: string; upstreamName?: string }, filter: string): boolean {
+  if (filter.startsWith(SERVICE_FILTER_PREFIX)) {
+    return serviceNameOf(source.upstreamName || source.upstreamId).toLowerCase() === filter.slice(SERVICE_FILTER_PREFIX.length)
+  }
+  return source.upstreamId === filter
+}
 
 const selectedAPIKey = computed(
   () => apiKeys.value.find((item) => item.id === selectedAPIKeyID.value) ?? null,
@@ -146,7 +180,7 @@ const visibleToolDetails = computed(() => {
     if (!matchesSmartView(detail, smartView.value)) return false
     if (
       selectedUpstream.value !== '' &&
-      !(detail.sources ?? []).some((source) => source.upstreamId === selectedUpstream.value)
+      !(detail.sources ?? []).some((source) => sourceMatchesFilter(source, selectedUpstream.value))
     ) {
       return false
     }
@@ -888,13 +922,13 @@ onUnmounted(() => {
         </label>
         <label class="block">
           <span class="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400"
-            >来源上游</span
+            >来源服务</span
           >
           <AppSelect
             v-model="selectedUpstream"
             :options="upstreamFilterOptions"
             class="w-full"
-            aria-label="来源上游"
+            aria-label="来源服务"
           />
         </label>
         <label class="block">

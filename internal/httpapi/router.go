@@ -88,6 +88,11 @@ type UpstreamTester interface {
 	Test(ctx context.Context, cfg domain.UpstreamConfig) (domain.UpstreamTestResult, error)
 }
 
+// UpstreamChecker 是已保存上游的检测依赖：连接、工具列表与可选的真实调用。
+type UpstreamChecker interface {
+	Check(ctx context.Context, id string, cfg domain.UpstreamConfig, probe *domain.UpstreamCheckProbe) (domain.UpstreamCheckResult, error)
+}
+
 // AggregationToolService 是管理台读取聚合后工具列表的窄接口。
 type AggregationToolService interface {
 	BuildToolSet(ctx context.Context, apiKeyID string) ([]domain.ToolDef, error)
@@ -362,6 +367,8 @@ type Router struct {
 	cacheEnsurer ToolCacheEnsurer
 	// upstreamTester 为保存前临时测试上游连接的服务。
 	upstreamTester UpstreamTester
+	// upstreamChecker 为已保存上游的检测服务。
+	upstreamChecker UpstreamChecker
 	// aggregation 为管理台读取聚合后真实工具列表的服务。
 	aggregation AggregationToolService
 	// ruleValidator 为别名/屏蔽规则的保存前校验器（领域规则引擎）。
@@ -466,6 +473,7 @@ type Deps struct {
 	ToolCache       ToolCacheStore
 	CacheEnsurer    ToolCacheEnsurer
 	UpstreamTester  UpstreamTester
+	UpstreamChecker UpstreamChecker
 	Aggregation     AggregationToolService
 	RuleValidator   RuleValidator
 	AliasStore      AliasStore
@@ -502,6 +510,7 @@ func NewRouter(d Deps) *Router {
 		toolCache:       d.ToolCache,
 		cacheEnsurer:    d.CacheEnsurer,
 		upstreamTester:  d.UpstreamTester,
+		upstreamChecker: d.UpstreamChecker,
 		aggregation:     d.Aggregation,
 		ruleValidator:   d.RuleValidator,
 		aliasStore:      d.AliasStore,

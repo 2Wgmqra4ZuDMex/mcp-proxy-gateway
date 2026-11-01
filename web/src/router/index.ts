@@ -186,6 +186,15 @@ const router = createRouter({
       },
     },
     {
+      path: '/mcp-check',
+      name: 'McpCheck',
+      component: () => import('../views/McpCheckView.vue'),
+      meta: {
+        title: 'MCP 检测',
+        requiresAuth: true,
+      },
+    },
+    {
       path: '/scripts',
       name: 'Scripts',
       component: () => import('../views/ScriptsView.vue'),
