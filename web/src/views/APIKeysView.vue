@@ -24,6 +24,7 @@ import { useToast } from '@/composables/useToast'
 import {
   listAPIKeys,
   setAPIKeyEnabled,
+  setAPIKeyRiskProfile,
   deleteAPIKey,
   type APIKey,
   type CreatedAPIKey,
@@ -130,6 +131,23 @@ watch(totalPages, (next) => {
 })
 
 /** 加载 API Key 列表。 */
+async function resetRiskProfile(key: APIKey): Promise<void> {
+  const ok = await confirm({
+    title: '改为不限制',
+    message: `「${key.name}」还在使用「${riskProfileLabel[key.riskProfile]}」风险档案。工具未经评级时会被当作高风险隐藏，这个 Key 可能看不到任何工具。改为不限制后，可见范围由上游权限、工具权限和屏蔽规则决定。`,
+    confirmText: '改为不限制',
+    tone: 'warning',
+  })
+  if (!ok) return
+  try {
+    await setAPIKeyRiskProfile(key.id, 'legacy_unrestricted')
+    toast.success(`「${key.name}」已改为不限制`)
+    await loadAPIKeys()
+  } catch (err) {
+    toast.error(err instanceof Error ? err.message : '修改失败')
+  }
+}
+
 async function loadAPIKeys(): Promise<void> {
   loading.value = true
   errorMessage.value = ''
@@ -356,13 +374,16 @@ async function copyKey(key: APIKey): Promise<void> {
                 >
                   {{ apiKeyLimitSummary(key) }}
                 </span>
-                <span
+                <button
                   v-if="(key.riskProfile || 'legacy_unrestricted') !== 'legacy_unrestricted'"
-                  v-tooltip="'该 Key 仍使用风险档案过滤工具，未评级的工具会被当作高风险隐藏'"
-                  class="bg-warning-50 text-warning-700 dark:bg-warning-500/10 dark:text-warning-400 inline-flex items-center rounded-full px-2 py-0.5 text-xs"
+                  v-tooltip="'该 Key 仍在用风险档案过滤工具，未评级的工具会被隐藏。点击改为不限制'"
+                  type="button"
+                  class="bg-warning-50 text-warning-700 hover:bg-warning-100 dark:bg-warning-500/10 dark:text-warning-400 dark:hover:bg-warning-500/20 inline-flex items-center rounded-full px-2 py-0.5 text-xs transition"
+                  :aria-label="`${key.name} 改为不限制风险档案`"
+                  @click="resetRiskProfile(key)"
                 >
-                  {{ riskProfileLabel[key.riskProfile || 'legacy_unrestricted'] }}
-                </span>
+                  {{ riskProfileLabel[key.riskProfile || 'legacy_unrestricted'] }} · 点此修复
+                </button>
               </div>
             </div>
             <button
