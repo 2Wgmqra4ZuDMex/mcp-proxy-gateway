@@ -428,8 +428,8 @@ onUnmounted(clearSearchTimer)
                     class="flex h-full w-full flex-col p-4 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-400"
                     @click="openDetail(tpl)"
                   >
-                    <div class="mb-2 flex items-start gap-2">
-                      <h4 class="min-w-0 flex-1 truncate pr-7 text-sm font-semibold text-gray-800 dark:text-white/90">{{ tpl.name }}</h4>
+                    <div class="mb-2 flex items-start gap-2 pr-8">
+                      <h4 class="min-w-0 flex-1 truncate text-sm font-semibold text-gray-800 dark:text-white/90">{{ tpl.name }}</h4>
                       <span class="shrink-0 rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-500 dark:bg-gray-800 dark:text-gray-400">{{ categoryLabel(tpl.category) }}</span>
                     </div>
                     <span
