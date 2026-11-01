@@ -125,8 +125,11 @@ func parseConnParams(cfg domain.UpstreamConfig) (connParams, error) {
 	case domain.TransportOpenAPI:
 		p.openapi = parseOpenAPIParams(cfg)
 	}
-	// 已在 ValidateConnParams 中校验，此处不会出错。
-	p.proxy, _ = proxyURLFromParams(cfg.ConnParams)
+	proxy, err := resolveProxy(cfg.ConnParams)
+	if err != nil {
+		return connParams{}, domain.NewError(domain.CodeUpstreamUnavailable, "出站代理不可用："+err.Error())
+	}
+	p.proxy = proxy
 	return p, nil
 }
 

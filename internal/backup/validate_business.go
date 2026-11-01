@@ -9,6 +9,7 @@ import (
 	"github.com/myGithub/mcp-proxy-gateway/internal/domain"
 	"github.com/myGithub/mcp-proxy-gateway/internal/risk"
 	"github.com/myGithub/mcp-proxy-gateway/internal/store"
+	"github.com/myGithub/mcp-proxy-gateway/internal/transport"
 )
 
 // validateBusiness 校验业务配置的引用完整性与字段级约束（Req 23.5、23.6）。
@@ -19,9 +20,37 @@ func validateBusiness(bc BusinessConfig) error {
 	fields := make(map[string]string)
 	ruleEngine := domain.NewRuleEngine()
 
+	seenProxyID := make(map[string]struct{})
+	seenProxyName := make(map[string]struct{})
+	for i, p := range bc.OutboundProxies {
+		prefix := fmt.Sprintf("outboundProxies[%d]", i)
+		if strings.TrimSpace(p.ID) == "" {
+			fields[prefix+".id"] = "出站代理标识不能为空"
+		} else if _, dup := seenProxyID[p.ID]; dup {
+			fields[prefix+".id"] = "出站代理标识重复：" + p.ID
+		} else {
+			seenProxyID[p.ID] = struct{}{}
+		}
+		if strings.TrimSpace(p.Name) == "" {
+			fields[prefix+".name"] = "出站代理名称不能为空"
+		} else if _, dup := seenProxyName[p.Name]; dup {
+			fields[prefix+".name"] = "出站代理名称重复：" + p.Name
+		} else {
+			seenProxyName[p.Name] = struct{}{}
+		}
+		if u, err := transport.ParseProxyURL(p.URL); err != nil || u == nil {
+			fields[prefix+".url"] = "出站代理地址无效"
+		}
+	}
+
 	seenUpstreamID := make(map[string]struct{})
 	for i, u := range bc.Upstreams {
 		prefix := fmt.Sprintf("upstreams[%d]", i)
+		if proxyID := transport.ProxyIDFromParams(u.Config.ConnParams); proxyID != "" {
+			if _, ok := seenProxyID[proxyID]; !ok {
+				fields[prefix+".config.connParams.proxyId"] = "引用的出站代理不存在：" + proxyID
+			}
+		}
 		if strings.TrimSpace(u.ID) == "" {
 			fields[prefix+".id"] = "上游标识不能为空"
 		} else if _, dup := seenUpstreamID[u.ID]; dup {

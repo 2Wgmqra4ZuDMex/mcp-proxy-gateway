@@ -93,6 +93,8 @@ export interface ScriptRef {
 }
 
 export interface ConnParams {
+  /** 引用的出站代理标识；未设置表示直连。 */
+  proxyId?: string
   /** 出站代理地址（http/https/socks5/socks5h）；留空表示直连。 */
   proxyUrl?: string
   /** stdio 启动形态；缺省视为 command。 */

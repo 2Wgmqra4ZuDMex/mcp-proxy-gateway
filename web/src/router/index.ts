@@ -177,6 +177,15 @@ const router = createRouter({
       },
     },
     {
+      path: '/outbound-proxies',
+      name: 'OutboundProxies',
+      component: () => import('../views/OutboundProxiesView.vue'),
+      meta: {
+        title: '出站代理',
+        requiresAuth: true,
+      },
+    },
+    {
       path: '/scripts',
       name: 'Scripts',
       component: () => import('../views/ScriptsView.vue'),

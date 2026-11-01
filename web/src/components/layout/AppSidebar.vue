@@ -185,6 +185,11 @@ const allMenuGroups = [
         path: '/runtime',
       },
       {
+        icon: SendIcon,
+        name: '出站代理',
+        path: '/outbound-proxies',
+      },
+      {
         icon: DraftIcon,
         name: '脚本中心',
         path: '/scripts',

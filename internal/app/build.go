@@ -18,6 +18,7 @@ import (
 	"github.com/myGithub/mcp-proxy-gateway/internal/httpapi"
 	"github.com/myGithub/mcp-proxy-gateway/internal/manager"
 	"github.com/myGithub/mcp-proxy-gateway/internal/mcpapi"
+	"github.com/myGithub/mcp-proxy-gateway/internal/outbound"
 	"github.com/myGithub/mcp-proxy-gateway/internal/risk"
 	rtenv "github.com/myGithub/mcp-proxy-gateway/internal/runtime"
 	"github.com/myGithub/mcp-proxy-gateway/internal/scripts"
@@ -100,6 +101,19 @@ func (a *App) build(envCfg config.EnvConfig) error {
 	)
 	scriptSvc := scripts.NewService(envCfg.DataDir, runtimeSvc)
 	transport.SetScriptService(scriptSvc)
+
+	// --- 出站代理：迁移旧的内联代理地址 → 加载缓存 → 注入传输层解析器（须早于恢复上游连接）---
+	if n, err := outbound.MigrateInlineProxies(context.Background(), repos.OutboundProxy, repos.Upstream); err != nil {
+		a.logger.Warn("迁移上游内联代理地址失败", "error", err)
+	} else if n > 0 {
+		a.logger.Info("已将上游内联代理地址迁移为出站代理", "count", n)
+	}
+	outboundSvc := outbound.New(repos.OutboundProxy, nil)
+	if err := outboundSvc.Load(context.Background()); err != nil {
+		return err
+	}
+	transport.SetProxyResolver(outboundSvc.Resolve)
+
 	factory := transport.NewFactory()
 	dialer := newSessionDialer(factory)
 	a.dialer = dialer
@@ -140,6 +154,7 @@ func (a *App) build(envCfg config.EnvConfig) error {
 		manager.WithToolSetCacheInvalidator(agg.InvalidateToolSetCache),
 	)
 	a.mgr = mgr
+	outboundSvc.SetUpstreamManager(mgr)
 
 	// --- 聚合调用路由：连接状态来自 manager，会话来自 dialer 注册表（Req 10.3/10.5/10.8）---
 	callTimeout := time.Duration(yamlCfg.Aggregation.UpstreamCallTimeoutS) * time.Second
@@ -251,6 +266,7 @@ func (a *App) build(envCfg config.EnvConfig) error {
 		APIKeyFilters:   apiKeyFilterMgr,
 		APIKeyUpstreams: upstreamAccessMgr,
 		APIKeyTools:     toolAccessMgr,
+		OutboundProxies: outboundSvc,
 		ACLStore:        repos.ACL,
 		RateLimitStore:  repos.APIKey,
 		ToolRiskStore:   repos.ToolRisk,

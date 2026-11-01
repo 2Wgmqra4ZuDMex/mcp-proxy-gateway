@@ -42,6 +42,9 @@ type BusinessConfig struct {
 	AIProviders []risk.Provider `json:"aiProviders,omitempty"`
 	// ToolRisks 保留风险目录与人工覆盖历史。
 	ToolRisks []risk.Assessment `json:"toolRisks,omitempty"`
+	// OutboundProxies 为出站代理（含明文代理凭证）；上游经 connParams.proxyId 引用。
+	// 为空时不写出，保持与原版备份格式一致。
+	OutboundProxies []store.OutboundProxy `json:"outboundProxies,omitempty"`
 }
 
 // UpstreamEntry 为单个上游 MCP 的备份条目。

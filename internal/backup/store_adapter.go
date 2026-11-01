@@ -46,6 +46,14 @@ func (a *StoreAdapter) ExportBusiness(ctx context.Context) (BusinessConfig, erro
 	}
 	bc.AliasRules = aliases
 
+	proxies, err := a.repos.OutboundProxy.List(ctx)
+	if err != nil {
+		return BusinessConfig{}, err
+	}
+	if len(proxies) > 0 {
+		bc.OutboundProxies = proxies
+	}
+
 	filterRows, err := a.repos.FilterMCP.List(ctx)
 	if err != nil {
 		return BusinessConfig{}, err
@@ -174,6 +182,21 @@ func (a *StoreAdapter) importBusiness(ctx context.Context, bc BusinessConfig) er
 	}
 	for _, provider := range existingProviders {
 		if err := a.repos.AIProvider.Delete(ctx, provider.ID); err != nil {
+			return err
+		}
+	}
+	// 上游已删除，代理不再被引用，可安全清空后按备份重建（保留原标识以维持上游引用）。
+	existingProxies, err := a.repos.OutboundProxy.List(ctx)
+	if err != nil {
+		return err
+	}
+	for _, p := range existingProxies {
+		if err := a.repos.OutboundProxy.Delete(ctx, p.ID); err != nil {
+			return err
+		}
+	}
+	for _, p := range bc.OutboundProxies {
+		if _, err := a.repos.OutboundProxy.Create(ctx, p); err != nil {
 			return err
 		}
 	}
