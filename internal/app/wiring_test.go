@@ -58,6 +58,15 @@ func TestRetryPolicyFromConfig(t *testing.T) {
 	}
 }
 
+func TestStartupCacheFillTimeout(t *testing.T) {
+	if got := startupCacheFillTimeout(0); got != 2*time.Minute {
+		t.Fatalf("未配置同步超时应取 2 分钟，got %v", got)
+	}
+	if got := startupCacheFillTimeout(30 * time.Second); got != 90*time.Second {
+		t.Fatalf("应在同步超时基础上留 1 分钟余量，got %v", got)
+	}
+}
+
 // TestEnsureJWTSecretGeneratesAndPersists 验证 EnsureJWTSecret 在密钥为空时生成非空密钥并写回，
 // 在密钥已存在时保持不变（幂等）。
 func TestEnsureJWTSecretGeneratesAndPersists(t *testing.T) {

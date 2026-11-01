@@ -184,8 +184,31 @@ func (a *App) startBackground(ctx context.Context) {
 		}
 	})
 
+	// 启动后为缺失工具缓存的已启用上游补拉一次（如刚导入备份），无需等待周期同步或手动刷新。
+	a.runBackgroundStep("补拉缺失的工具缓存", func() {
+		go func() {
+			defer func() {
+				if recovered := recover(); recovered != nil {
+					safego.LogRecovered(a.logger, "启动补拉工具缓存 panic 已恢复", recovered)
+				}
+			}()
+			runCtx, cancel := context.WithTimeout(ctx, startupCacheFillTimeout(a.syncTimeout))
+			defer cancel()
+			a.syncer.EnsureCachedForEnabled(runCtx)
+		}()
+	})
+
 	// 审计保留期清理：以 24 小时为周期独立运行（Req 22.5）。
 	a.runBackgroundStep("启动审计保留期清理", func() { a.startAuditRetention(ctx) })
+}
+
+// startupCacheFillTimeout 为启动补拉工具缓存的整体时限：各上游并发拉取，单次同步超时
+// 之外再留出连接建立的余量；同步超时未配置时取 2 分钟。
+func startupCacheFillTimeout(syncTimeout time.Duration) time.Duration {
+	if syncTimeout <= 0 {
+		return 2 * time.Minute
+	}
+	return syncTimeout + time.Minute
 }
 
 func (a *App) runBackgroundStep(name string, step func()) {
