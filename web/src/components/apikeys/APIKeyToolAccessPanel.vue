@@ -306,11 +306,9 @@ async function save(): Promise<void> {
                   <span class="block truncate font-mono text-sm text-gray-800 dark:text-white/90">{{
                     tool.name
                   }}</span>
-                  <span
-                    v-if="tool.description"
-                    class="mt-0.5 line-clamp-2 text-xs text-gray-400"
-                    >{{ tool.description }}</span
-                  >
+                  <span v-if="tool.description" class="mt-0.5 line-clamp-2 text-xs text-gray-400">{{
+                    tool.description
+                  }}</span>
                 </span>
                 <span v-if="tool.sourceCount > 1" class="shrink-0 text-xs text-gray-400">
                   {{ tool.sourceCount }} 个账号
