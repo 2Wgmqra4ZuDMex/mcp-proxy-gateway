@@ -308,7 +308,7 @@ async function save(): Promise<void> {
                   }}</span>
                   <span
                     v-if="tool.description"
-                    class="mt-0.5 line-clamp-2 block text-xs text-gray-400"
+                    class="mt-0.5 line-clamp-2 text-xs text-gray-400"
                     >{{ tool.description }}</span
                   >
                 </span>
