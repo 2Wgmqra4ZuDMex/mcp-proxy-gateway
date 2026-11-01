@@ -3,7 +3,7 @@
  * API Key 配置弹窗（任务 26.3）。
  *
  * 集中管理单个 API Key 的：
- * - 屏蔽规则（Req 13.1）：列出/创建/启停/删除，字段含 pattern / isRegex / enabled；
+ * - 上游权限与工具权限：限定该 Key 可见的上游与工具（Key 级屏蔽规则已由工具权限取代，界面不再提供）；
  * - 来源白名单 ACL（Req 13.9）：列出/新增/删除 CIDR；
  * - 限流配置（Req 21）：rateLimit + rateWindowS，清空二者即禁用限流。
  *
@@ -11,10 +11,6 @@
  */
 import { computed, ref, watch } from 'vue'
 import {
-  listAPIKeyFilters,
-  createAPIKeyFilter,
-  setAPIKeyFilterEnabled,
-  deleteAPIKeyFilter,
   listACL,
   createACL,
   deleteACL,
@@ -23,7 +19,6 @@ import {
   getAPIKeyUpstreamAccess,
   updateAPIKeyUpstreamAccess,
   type APIKey,
-  type APIKeyFilter,
   type ACLEntry,
   type UpstreamAccessMode,
 } from '@/api/apikeys'
@@ -34,10 +29,6 @@ import { CONN_STATE_LABELS, listUpstreams, type Upstream } from '@/api/upstreams
 import { getAPIKeyUsageProfile, type APIKeyToolUsage, type APIKeyUsageProfile } from '@/api/stats'
 import { useConfirm } from '@/composables/useConfirm'
 import { useToast } from '@/composables/useToast'
-import {
-  buildAPIKeyFilterPreview,
-  type APIKeyFilterPreviewSummary,
-} from '@/utils/apiKeyFilterPreview'
 import { apiKeyLimitSummary } from '@/utils/apiKeyLimitSummary'
 
 const props = defineProps<{
@@ -50,8 +41,8 @@ const { confirm } = useConfirm()
 const toast = useToast()
 
 /** 当前激活的分页签。 */
-type Tab = 'profile' | 'risk' | 'upstreams' | 'tools' | 'filters' | 'acl' | 'ratelimit'
-const activeTab = ref<Tab>('filters')
+type Tab = 'profile' | 'upstreams' | 'tools' | 'acl' | 'ratelimit'
+const activeTab = ref<Tab>('tools')
 
 /** 通用提示与加载状态。 */
 const errorMessage = ref('')
@@ -72,52 +63,9 @@ function showError(err: unknown, fallback: string, seq?: number): void {
   }, 4000)
 }
 
-// ── 屏蔽规则 ──────────────────────────────────────────────────────────────
-const filters = ref<APIKeyFilter[]>([])
-const filtersLoading = ref(false)
-const newFilterPattern = ref('')
-const newFilterIsRegex = ref(false)
-const filterBusy = ref(false)
+// ── 工具详情（使用画像中解析来源名称）──────────────────────────────────────
 const toolDetails = ref<ToolDetail[]>([])
 const toolDetailsReady = ref(false)
-
-const filterPreviewSummaries = computed<Record<string, APIKeyFilterPreviewSummary>>(() => {
-  const summaries: Record<string, APIKeyFilterPreviewSummary> = {}
-  for (const rule of filters.value) {
-    summaries[rule.id] = buildFilterPreviewSummary(rule)
-  }
-  return summaries
-})
-
-const draftFilterPreviewSummary = computed<APIKeyFilterPreviewSummary>(() =>
-  buildAPIKeyFilterPreview(
-    {
-      pattern: newFilterPattern.value,
-      isRegex: newFilterIsRegex.value,
-      enabled: true,
-    },
-    toolDetails.value,
-    toolDetailsReady.value,
-    {
-      emptyLabel: '填写匹配模式后显示预计屏蔽影响',
-      invalidPatternLabel: '正则暂不可用',
-      hitLabel: (count) => `预计屏蔽 ${count} 个来源`,
-    },
-  ),
-)
-
-async function loadFilters(id: string, seq: number): Promise<void> {
-  filtersLoading.value = true
-  try {
-    const data = await listAPIKeyFilters(id)
-    if (seq !== loadSeq) return
-    filters.value = data
-  } catch (err) {
-    showError(err, '加载屏蔽规则失败', seq)
-  } finally {
-    if (seq === loadSeq) filtersLoading.value = false
-  }
-}
 
 async function loadToolDetails(): Promise<void> {
   toolDetailsReady.value = false
@@ -127,59 +75,6 @@ async function loadToolDetails(): Promise<void> {
     toolDetailsReady.value = true
   } catch {
     toolDetails.value = []
-  }
-}
-
-async function addFilter(): Promise<void> {
-  if (props.apiKey === null) return
-  const pattern = newFilterPattern.value.trim()
-  if (pattern.length < 1 || pattern.length > 200) {
-    showError(null, '匹配模式长度需在 1 至 200 个字符之间')
-    return
-  }
-  filterBusy.value = true
-  try {
-    await createAPIKeyFilter(props.apiKey.id, {
-      pattern,
-      isRegex: newFilterIsRegex.value,
-      enabled: true,
-    })
-    newFilterPattern.value = ''
-    newFilterIsRegex.value = false
-    await loadFilters(props.apiKey.id, loadSeq)
-    showToast('已添加屏蔽规则')
-  } catch (err) {
-    showError(err, '添加屏蔽规则失败')
-  } finally {
-    filterBusy.value = false
-  }
-}
-
-async function toggleFilter(rule: APIKeyFilter): Promise<void> {
-  if (props.apiKey === null) return
-  try {
-    await setAPIKeyFilterEnabled(rule.id, !rule.enabled)
-    await loadFilters(props.apiKey.id, loadSeq)
-  } catch (err) {
-    showError(err, '操作失败')
-  }
-}
-
-async function removeFilter(rule: APIKeyFilter): Promise<void> {
-  if (props.apiKey === null) return
-  const ok = await confirm({
-    title: '确认删除',
-    message: `确定删除屏蔽规则「${rule.pattern}」吗？该操作不可恢复。`,
-    confirmText: '删除',
-    tone: 'danger',
-  })
-  if (!ok) return
-  try {
-    await deleteAPIKeyFilter(rule.id)
-    await loadFilters(props.apiKey.id, loadSeq)
-    showToast('已删除屏蔽规则')
-  } catch (err) {
-    showError(err, '删除屏蔽规则失败')
   }
 }
 
@@ -518,15 +413,12 @@ watch(
     // 每次切换 key 都产生新序号，使所有飞行中的旧请求在写入状态前被丢弃。
     const seq = ++loadSeq
     profileRequestSeq += 1
-    activeTab.value = 'filters'
+    activeTab.value = 'tools'
     errorMessage.value = ''
-    newFilterPattern.value = ''
-    newFilterIsRegex.value = false
     newCidr.value = ''
     usageProfile.value = emptyUsageProfile(key.id)
     riskProfile.value = key.riskProfile || 'legacy_unrestricted'
     upstreamSearch.value = ''
-    void loadFilters(key.id, seq)
     void loadToolDetails()
     void loadACL(key.id, seq)
     void loadRateLimit(key.id, seq)
@@ -535,14 +427,6 @@ watch(
   },
   { immediate: true },
 )
-
-function filterPreviewSummary(rule: APIKeyFilter): APIKeyFilterPreviewSummary {
-  return filterPreviewSummaries.value[rule.id] ?? buildFilterPreviewSummary(rule)
-}
-
-function buildFilterPreviewSummary(rule: APIKeyFilter): APIKeyFilterPreviewSummary {
-  return buildAPIKeyFilterPreview(rule, toolDetails.value, toolDetailsReady.value)
-}
 </script>
 
 <template>
@@ -589,7 +473,6 @@ function buildFilterPreviewSummary(rule: APIKeyFilter): APIKeyFilterPreviewSumma
               { key: 'profile', label: '使用画像' },
               { key: 'upstreams', label: '上游权限' },
               { key: 'tools', label: '工具权限' },
-              { key: 'filters', label: '屏蔽规则' },
               { key: 'acl', label: 'IP 白名单' },
               { key: 'ratelimit', label: '调用限制' },
             ]"
@@ -868,175 +751,6 @@ function buildFilterPreviewSummary(rule: APIKeyFilter): APIKeyFilterPreviewSumma
 
           <section v-else-if="activeTab === 'tools' && apiKey !== null">
             <APIKeyToolAccessPanel :api-key-id="apiKey.id" />
-          </section>
-
-          <!-- 屏蔽规则 -->
-          <section v-else-if="activeTab === 'filters'">
-            <div class="mb-4 flex flex-wrap items-end gap-2">
-              <div class="min-w-[200px] flex-1">
-                <label class="mb-1.5 block text-xs font-medium text-gray-600 dark:text-gray-400">
-                  匹配模式
-                </label>
-                <input
-                  v-model="newFilterPattern"
-                  type="text"
-                  maxlength="200"
-                  placeholder="工具原始名称；正则模式如 ^admin\..+$"
-                  class="focus:border-brand-400 focus:ring-brand-100 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-800 focus:ring-2 focus:outline-none dark:border-gray-700 dark:bg-gray-800 dark:text-white/90"
-                  @keyup.enter="addFilter"
-                />
-              </div>
-              <div class="flex items-center gap-2 pb-2 text-sm text-gray-600 dark:text-gray-300">
-                <span>正则</span>
-                <button
-                  type="button"
-                  role="switch"
-                  :aria-checked="newFilterIsRegex"
-                  class="relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition"
-                  :class="newFilterIsRegex ? 'bg-brand-500' : 'bg-gray-300 dark:bg-gray-700'"
-                  @click="newFilterIsRegex = !newFilterIsRegex"
-                >
-                  <span
-                    class="inline-block h-4 w-4 transform rounded-full bg-white transition"
-                    :class="newFilterIsRegex ? 'translate-x-6' : 'translate-x-1'"
-                  ></span>
-                </button>
-              </div>
-              <button
-                type="button"
-                class="bg-brand-500 hover:bg-brand-600 rounded-lg px-3.5 py-2 text-sm font-medium text-white transition disabled:opacity-60"
-                :disabled="filterBusy"
-                @click="addFilter"
-              >
-                添加
-              </button>
-            </div>
-            <div
-              v-if="newFilterPattern.trim() !== ''"
-              class="border-warning-200 bg-warning-50 text-warning-700 dark:border-warning-500/20 dark:bg-warning-500/10 dark:text-warning-300 mb-4 rounded-lg border px-2.5 py-2 text-xs"
-            >
-              <div class="flex items-center justify-between gap-2">
-                <span>{{ draftFilterPreviewSummary.label }}</span>
-                <span
-                  v-if="draftFilterPreviewSummary.hiddenCount > 0"
-                  class="text-warning-600 dark:text-warning-300 shrink-0"
-                >
-                  +{{ draftFilterPreviewSummary.hiddenCount }}
-                </span>
-              </div>
-              <div
-                v-if="draftFilterPreviewSummary.items.length > 0"
-                class="mt-2 flex flex-wrap gap-1.5"
-              >
-                <AppTooltip
-                  v-for="item in draftFilterPreviewSummary.items"
-                  :key="item.key"
-                  :content="`${item.upstreamName} / ${item.originalName}`"
-                  placement="bottom"
-                >
-                  <span
-                    class="text-warning-700 ring-warning-200 dark:text-warning-200 dark:ring-warning-500/20 inline-flex max-w-full items-center rounded-md bg-white px-1.5 py-0.5 text-[11px] ring-1 dark:bg-white/5"
-                  >
-                    <span class="truncate">{{ item.exposedName }} / {{ item.originalName }}</span>
-                  </span>
-                </AppTooltip>
-              </div>
-            </div>
-
-            <div
-              v-if="filtersLoading"
-              class="rounded-xl border border-gray-200 px-4 py-8 text-center text-sm text-gray-400 dark:border-gray-800"
-            >
-              加载中…
-            </div>
-            <div
-              v-else-if="filters.length === 0"
-              class="rounded-xl border border-dashed border-gray-300 px-4 py-8 text-center text-sm text-gray-400 dark:border-gray-700"
-            >
-              暂无屏蔽规则
-            </div>
-            <div v-else class="space-y-2">
-              <div
-                v-for="rule in filters"
-                :key="rule.id"
-                class="rounded-xl border border-gray-200 bg-white p-3 dark:border-gray-800 dark:bg-white/[0.03]"
-              >
-                <div class="flex items-center gap-3">
-                  <AppTooltip
-                    :content="rule.pattern"
-                    placement="bottom-start"
-                    class="min-w-0 flex-1"
-                  >
-                    <code
-                      class="block truncate font-mono text-xs text-gray-700 dark:text-gray-300"
-                      >{{ rule.pattern }}</code
-                    >
-                  </AppTooltip>
-                  <span
-                    class="inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-xs"
-                    :class="
-                      rule.isRegex
-                        ? 'bg-brand-50 text-brand-600 dark:bg-brand-500/10 dark:text-brand-400'
-                        : 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300'
-                    "
-                  >
-                    {{ rule.isRegex ? '正则' : '精确' }}
-                  </span>
-                  <button
-                    type="button"
-                    role="switch"
-                    :aria-checked="rule.enabled"
-                    class="relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition"
-                    :class="rule.enabled ? 'bg-brand-500' : 'bg-gray-300 dark:bg-gray-700'"
-                    @click="toggleFilter(rule)"
-                  >
-                    <span
-                      class="inline-block h-3.5 w-3.5 transform rounded-full bg-white transition"
-                      :class="rule.enabled ? 'translate-x-5' : 'translate-x-1'"
-                    ></span>
-                  </button>
-                  <button
-                    type="button"
-                    class="text-error-600 hover:bg-error-50 dark:text-error-400 dark:hover:bg-error-500/10 shrink-0 rounded-lg px-2.5 py-1.5 text-xs font-medium"
-                    @click="removeFilter(rule)"
-                  >
-                    删除
-                  </button>
-                </div>
-                <div
-                  class="border-warning-200 bg-warning-50 text-warning-700 dark:border-warning-500/20 dark:bg-warning-500/10 dark:text-warning-300 mt-2 rounded-lg border px-2.5 py-2 text-xs"
-                >
-                  <div class="flex items-center justify-between gap-2">
-                    <span>{{ filterPreviewSummary(rule).label }}</span>
-                    <span
-                      v-if="filterPreviewSummary(rule).hiddenCount > 0"
-                      class="text-warning-600 dark:text-warning-300 shrink-0"
-                    >
-                      +{{ filterPreviewSummary(rule).hiddenCount }}
-                    </span>
-                  </div>
-                  <div
-                    v-if="filterPreviewSummary(rule).items.length > 0"
-                    class="mt-2 flex flex-wrap gap-1.5"
-                  >
-                    <AppTooltip
-                      v-for="item in filterPreviewSummary(rule).items"
-                      :key="item.key"
-                      :content="`${item.upstreamName} / ${item.originalName}`"
-                      placement="bottom"
-                    >
-                      <span
-                        class="text-warning-700 ring-warning-200 dark:text-warning-200 dark:ring-warning-500/20 inline-flex max-w-full items-center rounded-md bg-white px-1.5 py-0.5 text-[11px] ring-1 dark:bg-white/5"
-                      >
-                        <span class="truncate"
-                          >{{ item.exposedName }} / {{ item.originalName }}</span
-                        >
-                      </span>
-                    </AppTooltip>
-                  </div>
-                </div>
-              </div>
-            </div>
           </section>
 
           <!-- IP 白名单 -->
