@@ -75,6 +75,7 @@ func (s *Service) StartEnrich(force bool) error {
 		return errAlreadyRunning
 	}
 	s.running = true
+	previous := s.status
 	s.status.Running, s.status.Progress, s.status.ProgressTotal, s.status.Failed = true, 0, 0, 0
 	s.status.LastError, s.status.LastAdded, s.status.InputTokens, s.status.OutputTokens = "", 0, 0, 0
 	s.runMu.Unlock()
@@ -94,17 +95,24 @@ func (s *Service) StartEnrich(force bool) error {
 				_ = s.StartEnrich(false)
 			}
 		}()
-		s.runEnrich(ctx, p, source, force)
+		if !s.runEnrich(ctx, p, source, force) {
+			// 没有需要生成的内容（例如开启开关时的自动检查）：保留上次生成的记录。
+			s.runMu.Lock()
+			s.status.LastRunAt, s.status.LastDurationMS, s.status.LastAdded = previous.LastRunAt, previous.LastDurationMS, previous.LastAdded
+			s.status.InputTokens, s.status.OutputTokens, s.status.LastError = previous.InputTokens, previous.OutputTokens, previous.LastError
+			s.runMu.Unlock()
+		}
 	}()
 	return nil
 }
 
-func (s *Service) runEnrich(ctx context.Context, p risk.Provider, source ToolSource, force bool) {
+// runEnrich 执行一次生成；没有任何待生成内容时返回 false。
+func (s *Service) runEnrich(ctx context.Context, p risk.Provider, source ToolSource, force bool) bool {
 	started := s.now()
 	discoveries, err := source(ctx)
 	if err != nil {
 		s.setLastError("读取工具列表失败：" + err.Error())
-		return
+		return true
 	}
 	pending, siblings := s.pendingTools(discoveries, force)
 	s.runMu.Lock()
@@ -136,8 +144,12 @@ func (s *Service) runEnrich(ctx context.Context, p risk.Provider, source ToolSou
 	close(batches)
 	wg.Wait()
 
+	services := 0
 	if ctx.Err() == nil {
-		s.enrichServices(ctx, p, discoveries, force)
+		services = s.enrichServices(ctx, p, discoveries, force)
+	}
+	if len(pending) == 0 && services == 0 {
+		return false
 	}
 	s.mu.RLock()
 	invalidate := s.invalidate
@@ -150,7 +162,8 @@ func (s *Service) runEnrich(ctx context.Context, p risk.Provider, source ToolSou
 	s.status.LastRunAt = &finished
 	s.status.LastDurationMS = finished.Sub(started).Milliseconds()
 	s.runMu.Unlock()
-	s.logger.Info("工具说明生成完成", "pending", len(pending), "added", s.snapshotStatus().LastAdded, "failed", s.snapshotStatus().Failed)
+	s.logger.Info("工具说明生成完成", "pending", len(pending), "services", services, "added", s.snapshotStatus().LastAdded, "failed", s.snapshotStatus().Failed)
+	return true
 }
 
 // pendingTools 按指纹去重，返回待生成的工具与每个服务的工具名（供 related 选择）。
@@ -261,7 +274,8 @@ func (s *Service) enrichBatch(ctx context.Context, p risk.Provider, batch []pend
 	s.runMu.Unlock()
 }
 
-func (s *Service) enrichServices(ctx context.Context, p risk.Provider, discoveries []domain.ToolDiscovery, force bool) {
+// enrichServices 为缺少或已过期的服务生成简介，返回需要生成的服务数。
+func (s *Service) enrichServices(ctx context.Context, p risk.Provider, discoveries []domain.ToolDiscovery, force bool) int {
 	type svcTool struct {
 		Name    string `json:"name"`
 		Summary string `json:"summary,omitempty"`
@@ -317,7 +331,7 @@ func (s *Service) enrichServices(ctx context.Context, p risk.Provider, discoveri
 	}
 	s.mu.RUnlock()
 	if len(inputs) == 0 {
-		return
+		return 0
 	}
 	for start := 0; start < len(inputs); start += 20 {
 		chunk := inputs[start:min(start+20, len(inputs))]
@@ -355,6 +369,7 @@ func (s *Service) enrichServices(ctx context.Context, p risk.Provider, discoveri
 			s.setLastError("保存服务简介失败：" + err.Error())
 		}
 	}
+	return len(inputs)
 }
 
 func (s *Service) save(ctx context.Context, items []Enrichment) error {

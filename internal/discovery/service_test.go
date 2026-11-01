@@ -246,6 +246,9 @@ func TestEnrichGeneratesOncePerFingerprintAndFeedsKeywords(t *testing.T) {
 	if llm.hits.Load() != hits {
 		t.Fatal("指纹未变化时不应重复调用模型")
 	}
+	if after := svc.snapshotStatus(); after.LastAdded != 3 || after.LastRunAt == nil {
+		t.Fatalf("没有待生成内容时应保留上次生成记录：%+v", after)
+	}
 	overview := svc.ServiceOverview(testTools())
 	if !strings.Contains(overview, "- context7：网页搜索与抓取（query-docs）") || !strings.Contains(overview, "- tavily") {
 		t.Fatalf("服务清单不符：%s", overview)
