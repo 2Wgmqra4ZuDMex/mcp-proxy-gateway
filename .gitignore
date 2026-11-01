@@ -43,3 +43,6 @@ __debug_bin.exe*
 /.tmp-gotmp/
 /.tmp-gocache-race/
 /.tmp-gotmp-race/
+
+# 本地交叉编译产物（供 Dockerfile 打包）
+/bin/
