@@ -76,7 +76,7 @@ const loadError = ref('')
 const copiedKey = ref('')
 const guideOpen = ref(false)
 const selectedGuidePreset = ref<MCPClientPresetKey>('generic')
-const guideMode = ref<'default' | 'full' | 'smart'>('default')
+const guideMode = ref<'default' | 'full'>('default')
 const selectedGuideEndpoint = ref<EndpointKey>('http')
 const selectedGuideAuth = ref<AuthKey>('bearer')
 const guideConfigKind = ref<MCPClientConfigKind>('mcp-json')
@@ -340,7 +340,7 @@ function errorMessage(err: unknown): string {
 function openGuide(): void {
   guideCopyError.value = ''
   guideCopiedKey.value = ''
-  guideMode.value = endpointTab.value
+  guideMode.value = endpointTab.value === 'full' ? 'full' : 'default'
   guideOriginHistory.value = loadMCPAccessHistory()
   if (guideOrigin.value.trim() === '') {
     guideOrigin.value = guideOriginHistory.value.origins[0] ?? inferCurrentOrigin()
@@ -1241,18 +1241,6 @@ const cardClass =
                         <span class="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-600 dark:bg-white/5 dark:text-gray-400">/mcp/full</span>
                       </span>
                       <span class="mt-2 block text-xs leading-5 text-gray-500 dark:text-gray-400">一次性提供全部工具，兼容性最好；适合 Claude Code、OpenCode 这类自带工具搜索的客户端。</span>
-                    </button>
-                    <button
-                      type="button"
-                      class="rounded-xl border p-4 text-left transition"
-                      :class="guideMode === 'smart' ? 'border-brand-300 bg-brand-50/60 dark:border-brand-500/50 dark:bg-brand-500/[0.08]' : 'border-gray-200 hover:border-brand-300 hover:bg-brand-50/40 dark:border-gray-800 dark:hover:border-brand-500/40 dark:hover:bg-brand-500/[0.06]'"
-                      @click="guideMode = 'smart'"
-                    >
-                      <span class="flex items-center justify-between gap-3">
-                        <span class="text-sm font-semibold text-gray-800 dark:text-white/90">固定智能模式</span>
-                        <span class="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-600 dark:bg-white/5 dark:text-gray-400">/mcp/smart</span>
-                      </span>
-                      <span class="mt-2 block text-xs leading-5 text-gray-500 dark:text-gray-400">通过 4 个网关工具按需发现和调用。减少工具噪音，但部分模型可能不支持分步骤交互。</span>
                     </button>
                   </div>
                 </div>
