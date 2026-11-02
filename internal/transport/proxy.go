@@ -156,19 +156,27 @@ func baseTransportFor(proxy *url.URL) http.RoundTripper {
 }
 
 // proxyEnv 为 stdio 子进程生成代理环境变量；用户在 env 中显式设置的同名变量优先。
-func proxyEnv(proxy *url.URL, userEnv map[string]string) map[string]string {
+// SOCKS5 代理会换成本地 HTTP 中转（见 childProxyURL），并开启 Node 读取代理环境变量。
+func proxyEnv(proxy *url.URL, userEnv map[string]string) (map[string]string, error) {
 	if proxy == nil {
-		return userEnv
+		return userEnv, nil
 	}
-	out := make(map[string]string, len(userEnv)+6)
+	value, err := childProxyURL(proxy)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]string, len(userEnv)+9)
 	for k, v := range userEnv {
 		out[k] = v
 	}
-	value := proxy.String()
+	defaults := map[string]string{"NODE_USE_ENV_PROXY": "1", "NO_PROXY": "localhost,127.0.0.1,::1", "no_proxy": "localhost,127.0.0.1,::1"}
 	for _, key := range []string{"HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY", "https_proxy", "http_proxy", "all_proxy"} {
+		defaults[key] = value
+	}
+	for key, v := range defaults {
 		if _, exists := out[key]; !exists {
-			out[key] = value
+			out[key] = v
 		}
 	}
-	return out
+	return out, nil
 }
