@@ -76,7 +76,7 @@ const loadError = ref('')
 const copiedKey = ref('')
 const guideOpen = ref(false)
 const selectedGuidePreset = ref<MCPClientPresetKey>('generic')
-const guideMode = ref<'full' | 'smart'>('full')
+const guideMode = ref<'default' | 'full' | 'smart'>('default')
 const selectedGuideEndpoint = ref<EndpointKey>('http')
 const selectedGuideAuth = ref<AuthKey>('bearer')
 const guideConfigKind = ref<MCPClientConfigKind>('mcp-json')
@@ -99,7 +99,7 @@ const gatewayTools = ref<GatewayTool[]>([])
 const selectedAggregatedToolName = ref('')
 const toolDetailOpen = ref(false)
 
-const endpointTab = ref<'full' | 'smart'>('full')
+const endpointTab = ref<'default' | 'full' | 'smart'>('default')
 
 const effectiveServer = computed<ServerConfig | null>(() => runtimeServer.value ?? settings.value?.server ?? null)
 const targetServer = computed<ServerConfig | null>(() => settings.value?.server ?? runtimeServer.value ?? null)
@@ -156,65 +156,53 @@ const mcpPortSettingsLinkClass = computed(() => {
   return 'inline-flex h-8 items-center rounded-lg border border-success-200 bg-white px-3 text-xs font-medium text-success-700 transition hover:bg-success-100 dark:border-success-500/30 dark:bg-white/10 dark:text-success-300 dark:hover:bg-success-500/10'
 })
 
-const endpoints = computed<EndpointItem[]>(() => [
-  {
-    key: 'sse',
-    name: 'SSE',
-    badge: '事件流',
-    address: `${HTTP_ORIGIN}/mcp/full/sse`,
-    desc: '适合仍使用 SSE 传输的 MCP 客户端。',
-    clientType: 'sse',
-    guideDesc: '兼容旧版或仍以事件流建立会话的客户端，适合需要保持服务端推送通道的场景。',
-  },
-  {
-    key: 'http',
-    name: 'Streamable HTTP',
-    badge: '推荐',
-    address: `${HTTP_ORIGIN}/mcp/full/http`,
-    desc: '适合支持新版 HTTP 传输的客户端。',
-    clientType: 'streamable-http',
-    guideDesc: '当前最推荐的远程 MCP 接入方式，配置简单，适合绝大多数支持新版 MCP 传输的客户端。',
-  },
-  {
-    key: 'ws',
-    name: 'WebSocket',
-    badge: '长连接',
-    address: `${WS_ORIGIN}/mcp/full/ws`,
-    desc: '适合需要稳定双向通道的客户端。',
-    clientType: 'websocket',
-    guideDesc: '适合需要长连接和双向通信的客户端，浏览器直连时建议使用查询参数认证。',
-  },
-])
+type EndpointMode = 'default' | 'smart' | 'full'
 
-const smartEndpoints = computed<EndpointItem[]>(() => [
-  {
-    key: 'sse',
-    name: 'SSE',
-    badge: '事件流',
-    address: `${HTTP_ORIGIN}/mcp/smart/sse`,
-    desc: '智能模式 SSE 端点。',
-    clientType: 'sse',
-    guideDesc: '智能模式 SSE 传输端点。',
-  },
-  {
-    key: 'http',
-    name: 'Streamable HTTP',
-    badge: '推荐',
-    address: `${HTTP_ORIGIN}/mcp/smart/http`,
-    desc: '智能模式 HTTP 端点。',
-    clientType: 'streamable-http',
-    guideDesc: '智能模式 Streamable HTTP 端点，适合大多数客户端。',
-  },
-  {
-    key: 'ws',
-    name: 'WebSocket',
-    badge: '长连接',
-    address: `${WS_ORIGIN}/mcp/smart/ws`,
-    desc: '智能模式 WebSocket 端点。',
-    clientType: 'websocket',
-    guideDesc: '智能模式 WebSocket 端点。',
-  },
-])
+const endpointModePrefix: Record<EndpointMode, string> = {
+  default: '/mcp',
+  smart: '/mcp/smart',
+  full: '/mcp/full',
+}
+
+const endpointModeLabel: Record<EndpointMode, string> = {
+  default: '默认地址',
+  smart: '智能模式',
+  full: '全量模式',
+}
+
+function buildEndpoints(httpOrigin: string, wsOrigin: string, mode: EndpointMode): EndpointItem[] {
+  const prefix = endpointModePrefix[mode]
+  const label = endpointModeLabel[mode]
+  return [
+    {
+      key: 'sse',
+      name: 'SSE',
+      badge: '事件流',
+      address: `${httpOrigin}${prefix}/sse`,
+      desc: `${label} SSE 端点，适合仍使用 SSE 传输的客户端。`,
+      clientType: 'sse',
+      guideDesc: '兼容旧版或仍以事件流建立会话的客户端，适合需要保持服务端推送通道的场景。',
+    },
+    {
+      key: 'http',
+      name: 'Streamable HTTP',
+      badge: '推荐',
+      address: `${httpOrigin}${prefix}/http`,
+      desc: `${label} HTTP 端点，适合支持新版 HTTP 传输的客户端。`,
+      clientType: 'streamable-http',
+      guideDesc: '当前最推荐的远程 MCP 接入方式，配置简单，适合绝大多数支持新版 MCP 传输的客户端。',
+    },
+    {
+      key: 'ws',
+      name: 'WebSocket',
+      badge: '长连接',
+      address: `${wsOrigin}${prefix}/ws`,
+      desc: `${label} WebSocket 端点，适合需要稳定双向通道的客户端。`,
+      clientType: 'websocket',
+      guideDesc: '适合需要长连接和双向通信的客户端，浏览器直连时建议使用查询参数认证。',
+    },
+  ]
+}
 
 const authOptions: ReadonlyArray<AuthOption> = [
   {
@@ -273,76 +261,15 @@ const selectedToolDetail = computed<ToolDetail | null>(() => {
 const defaultModeLabel = computed(() =>
   settings.value?.mcp_api?.default_mode === 'full' ? '全量模式' : '智能模式',
 )
-const activeEndpoints = computed(() => endpointTab.value === 'smart' ? smartEndpoints.value : endpoints.value)
+const activeEndpoints = computed(() => buildEndpoints(HTTP_ORIGIN, WS_ORIGIN, endpointTab.value))
 const guideHTTPOrigin = computed(() => mcpHTTPOrigin(guideOrigin.value))
 const guideWSOrigin = computed(() => mcpWSOrigin(guideOrigin.value))
 const guideOriginDisplay = computed(() => normalizeMCPOrigin(guideOrigin.value) || HTTP_ORIGIN)
 const guidePresetOptions = MCP_CLIENT_PRESETS
 const selectedPreset = computed<MCPClientPreset>(() => getMCPClientPreset(selectedGuidePreset.value))
-const guideEndpoints = computed<EndpointItem[]>(() => {
-  const httpOrigin = guideHTTPOrigin.value
-  const wsOrigin = guideWSOrigin.value
-  if (guideMode.value === 'smart') {
-    return [
-      {
-        key: 'sse',
-        name: 'SSE',
-        badge: '事件流',
-        address: `${httpOrigin}/mcp/smart/sse`,
-        desc: '智能模式 SSE 端点。',
-        clientType: 'sse',
-        guideDesc: '智能模式 SSE 传输端点。',
-      },
-      {
-        key: 'http',
-        name: 'Streamable HTTP',
-        badge: '推荐',
-        address: `${httpOrigin}/mcp/smart/http`,
-        desc: '智能模式 HTTP 端点。',
-        clientType: 'streamable-http',
-        guideDesc: '智能模式 Streamable HTTP 端点，适合大多数客户端。',
-      },
-      {
-        key: 'ws',
-        name: 'WebSocket',
-        badge: '长连接',
-        address: `${wsOrigin}/mcp/smart/ws`,
-        desc: '智能模式 WebSocket 端点。',
-        clientType: 'websocket',
-        guideDesc: '智能模式 WebSocket 端点。',
-      },
-    ]
-  }
-  return [
-    {
-      key: 'sse',
-      name: 'SSE',
-      badge: '事件流',
-      address: `${httpOrigin}/mcp/full/sse`,
-      desc: '适合仍使用 SSE 传输的 MCP 客户端。',
-      clientType: 'sse',
-      guideDesc: '兼容旧版或仍以事件流建立会话的客户端，适合需要保持服务端推送通道的场景。',
-    },
-    {
-      key: 'http',
-      name: 'Streamable HTTP',
-      badge: '推荐',
-      address: `${httpOrigin}/mcp/full/http`,
-      desc: '适合支持新版 HTTP 传输的客户端。',
-      clientType: 'streamable-http',
-      guideDesc: '当前最推荐的远程 MCP 接入方式，配置简单，适合绝大多数支持新版 MCP 传输的客户端。',
-    },
-    {
-      key: 'ws',
-      name: 'WebSocket',
-      badge: '长连接',
-      address: `${wsOrigin}/mcp/full/ws`,
-      desc: '适合需要稳定双向通道的客户端。',
-      clientType: 'websocket',
-      guideDesc: '适合需要长连接和双向通信的客户端，浏览器直连时建议使用查询参数认证。',
-    },
-  ]
-})
+const guideEndpoints = computed<EndpointItem[]>(() =>
+  buildEndpoints(guideHTTPOrigin.value, guideWSOrigin.value, guideMode.value),
+)
 const selectedEndpoint = computed<EndpointItem>(
   () => guideEndpoints.value.find((item) => item.key === selectedGuideEndpoint.value) ?? guideEndpoints.value[0]!,
 )
@@ -862,7 +789,7 @@ const cardClass =
               <span class="font-medium text-brand-600 dark:text-brand-400">{{
                 defaultModeLabel
               }}</span
-              >，可在「系统设置 → 对外 API 默认值」修改；下方为两种模式的固定地址。
+              >，可在「系统设置 → 对外 API 默认值」修改；下方可切换查看默认地址与两种固定模式的地址。
             </p>
           </div>
           <div class="flex items-center gap-3">
@@ -887,10 +814,19 @@ const cardClass =
           <button
             type="button"
             class="flex-1 rounded-md px-3 py-2 text-sm font-medium transition"
+            :class="endpointTab === 'default' ? 'bg-white text-gray-800 shadow-sm dark:bg-gray-800 dark:text-white/90' : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300'"
+            @click="endpointTab = 'default'"
+          >
+            默认地址
+            <span class="ml-1 text-xs text-gray-400">（当前{{ defaultModeLabel }}）</span>
+          </button>
+          <button
+            type="button"
+            class="flex-1 rounded-md px-3 py-2 text-sm font-medium transition"
             :class="endpointTab === 'full' ? 'bg-white text-gray-800 shadow-sm dark:bg-gray-800 dark:text-white/90' : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300'"
             @click="endpointTab = 'full'"
           >
-            全量模式
+            固定全量
           </button>
           <button
             type="button"
@@ -898,8 +834,7 @@ const cardClass =
             :class="endpointTab === 'smart' ? 'bg-white text-gray-800 shadow-sm dark:bg-gray-800 dark:text-white/90' : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300'"
             @click="endpointTab = 'smart'"
           >
-            智能模式
-            <span class="ml-1 text-xs text-gray-400">（分步发现）</span>
+            固定智能
           </button>
         </div>
 
@@ -1286,14 +1221,26 @@ const cardClass =
                     <button
                       type="button"
                       class="rounded-xl border p-4 text-left transition"
+                      :class="guideMode === 'default' ? 'border-brand-300 bg-brand-50/60 dark:border-brand-500/50 dark:bg-brand-500/[0.08]' : 'border-gray-200 hover:border-brand-300 hover:bg-brand-50/40 dark:border-gray-800 dark:hover:border-brand-500/40 dark:hover:bg-brand-500/[0.06]'"
+                      @click="guideMode = 'default'"
+                    >
+                      <span class="flex items-center justify-between gap-3">
+                        <span class="text-sm font-semibold text-gray-800 dark:text-white/90">默认地址（当前{{ defaultModeLabel }}）</span>
+                        <span class="rounded-full bg-success-50 px-2 py-0.5 text-xs text-success-700 dark:bg-success-500/10 dark:text-success-400">推荐</span>
+                      </span>
+                      <span class="mt-2 block text-xs leading-5 text-gray-500 dark:text-gray-400">使用 /mcp/http 等默认地址，模式跟随「系统设置 → 默认接入模式」；以后切换模式无需修改客户端配置。</span>
+                    </button>
+                    <button
+                      type="button"
+                      class="rounded-xl border p-4 text-left transition"
                       :class="guideMode === 'full' ? 'border-brand-300 bg-brand-50/60 dark:border-brand-500/50 dark:bg-brand-500/[0.08]' : 'border-gray-200 hover:border-brand-300 hover:bg-brand-50/40 dark:border-gray-800 dark:hover:border-brand-500/40 dark:hover:bg-brand-500/[0.06]'"
                       @click="guideMode = 'full'"
                     >
                       <span class="flex items-center justify-between gap-3">
-                        <span class="text-sm font-semibold text-gray-800 dark:text-white/90">全量模式</span>
-                        <span class="rounded-full bg-success-50 px-2 py-0.5 text-xs text-success-700 dark:bg-success-500/10 dark:text-success-400">推荐</span>
+                        <span class="text-sm font-semibold text-gray-800 dark:text-white/90">固定全量模式</span>
+                        <span class="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-600 dark:bg-white/5 dark:text-gray-400">/mcp/full</span>
                       </span>
-                      <span class="mt-2 block text-xs leading-5 text-gray-500 dark:text-gray-400">直接暴露全部聚合工具，兼容性好，所有模型均可使用。</span>
+                      <span class="mt-2 block text-xs leading-5 text-gray-500 dark:text-gray-400">一次性提供全部工具，兼容性最好；适合 Claude Code、OpenCode 这类自带工具搜索的客户端。</span>
                     </button>
                     <button
                       type="button"
@@ -1302,8 +1249,8 @@ const cardClass =
                       @click="guideMode = 'smart'"
                     >
                       <span class="flex items-center justify-between gap-3">
-                        <span class="text-sm font-semibold text-gray-800 dark:text-white/90">智能模式</span>
-                        <span class="rounded-full bg-warning-50 px-2 py-0.5 text-xs text-warning-700 dark:bg-warning-500/10 dark:text-warning-400">分步发现</span>
+                        <span class="text-sm font-semibold text-gray-800 dark:text-white/90">固定智能模式</span>
+                        <span class="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-600 dark:bg-white/5 dark:text-gray-400">/mcp/smart</span>
                       </span>
                       <span class="mt-2 block text-xs leading-5 text-gray-500 dark:text-gray-400">通过 4 个网关工具按需发现和调用。减少工具噪音，但部分模型可能不支持分步骤交互。</span>
                     </button>

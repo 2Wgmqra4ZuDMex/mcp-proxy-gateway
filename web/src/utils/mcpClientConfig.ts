@@ -6,7 +6,8 @@ export interface MCPClientPreset {
   label: string
   badge: string
   desc: string
-  mode: 'full' | 'smart'
+  /** default 为 /mcp/* 默认地址（跟随系统设置），smart / full 为固定模式地址。 */
+  mode: 'default' | 'full' | 'smart'
   endpoint: 'sse' | 'http' | 'ws'
   auth: 'header' | 'bearer' | 'query'
   configKind: MCPClientConfigKind
@@ -35,7 +36,7 @@ export const MCP_CLIENT_PRESETS: ReadonlyArray<MCPClientPreset> = [
     label: '通用 MCP JSON',
     badge: '通用',
     desc: '适合支持 mcpServers JSON 的客户端。',
-    mode: 'full',
+    mode: 'default',
     endpoint: 'http',
     auth: 'bearer',
     configKind: 'mcp-json',
@@ -47,7 +48,7 @@ export const MCP_CLIENT_PRESETS: ReadonlyArray<MCPClientPreset> = [
     label: 'Claude Desktop',
     badge: '常用',
     desc: '生成 Claude 常见的 mcpServers 配置片段。',
-    mode: 'full',
+    mode: 'default',
     endpoint: 'http',
     auth: 'bearer',
     configKind: 'mcp-json',
@@ -59,7 +60,7 @@ export const MCP_CLIENT_PRESETS: ReadonlyArray<MCPClientPreset> = [
     label: 'Cursor',
     badge: '编辑器',
     desc: '生成 Cursor 常用的 MCP JSON 配置。',
-    mode: 'full',
+    mode: 'default',
     endpoint: 'http',
     auth: 'bearer',
     configKind: 'mcp-json',
@@ -71,7 +72,7 @@ export const MCP_CLIENT_PRESETS: ReadonlyArray<MCPClientPreset> = [
     label: 'VS Code',
     badge: '编辑器',
     desc: '生成 VS Code / GitHub Copilot 常用配置形态。',
-    mode: 'full',
+    mode: 'default',
     endpoint: 'http',
     auth: 'bearer',
     configKind: 'mcp-json',
@@ -83,7 +84,7 @@ export const MCP_CLIENT_PRESETS: ReadonlyArray<MCPClientPreset> = [
     label: 'Cherry Studio',
     badge: '客户端',
     desc: '生成便于导入或手动填写的服务条目。',
-    mode: 'full',
+    mode: 'default',
     endpoint: 'http',
     auth: 'bearer',
     configKind: 'server-entry',
