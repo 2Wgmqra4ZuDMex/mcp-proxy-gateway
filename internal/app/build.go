@@ -150,6 +150,7 @@ func (a *App) build(envCfg config.EnvConfig) error {
 	})
 	discoverySvc.SetInvalidate(agg.InvalidateToolSetCache)
 	agg.SetSearchKeywords(discoverySvc.ToolKeywords)
+	agg.SetAccountEventRecorder(repos.AccountEvent)
 	a.discovery = discoverySvc
 
 	// 工具列表写入经装饰器统一失效聚合集缓存；聚合服务自身仍使用原始缓存，
@@ -272,7 +273,8 @@ func (a *App) build(envCfg config.EnvConfig) error {
 		ToolCache:       toolCache,
 		CacheEnsurer:    a.syncer,
 		UpstreamTester:  upstreamTester{factory: factory},
-		UpstreamChecker: upstreamTester{factory: factory},
+		UpstreamChecker: upstreamTester{factory: factory, events: repos.AccountEvent},
+		AccountEvents:   accountEventView{repo: repos.AccountEvent, agg: agg},
 		Aggregation:     agg,
 		RuleValidator:   ruleEngine,
 		AliasStore:      repos.Alias,

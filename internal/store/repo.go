@@ -58,6 +58,8 @@ type Repositories struct {
 	AIProvider *AIProviderRepo
 	// ToolEnrichment 为 AI 生成的工具检索元数据仓储。
 	ToolEnrichment *ToolEnrichmentRepo
+	// AccountEvent 为上游账号异常记录仓储。
+	AccountEvent *AccountEventRepo
 	// ToolRisk 为按来源工具身份保存的风险目录仓储。
 	ToolRisk *ToolRiskRepo
 	// RiskJob 为持久化评级任务仓储。
@@ -84,6 +86,7 @@ func NewRepositories(db *gorm.DB) *Repositories {
 		Security:             NewSecurityRepo(db),
 		AIProvider:           NewAIProviderRepo(db),
 		ToolEnrichment:       NewToolEnrichmentRepo(db),
+		AccountEvent:         NewAccountEventRepo(db),
 		ToolRisk:             NewToolRiskRepo(db),
 		RiskJob:              NewRiskJobRepo(db),
 	}

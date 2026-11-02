@@ -143,6 +143,8 @@ func (p pinger) PingRedis(ctx context.Context) error {
 type upstreamTester struct {
 	factory      transport.TransportFactory
 	previewLimit int
+	// events 记录检测中发现的账号异常（限流、额度不足、Key 无效），可为空。
+	events aggregation.AccountEventRecorder
 }
 
 func (t upstreamTester) Test(ctx context.Context, cfg domain.UpstreamConfig) (domain.UpstreamTestResult, error) {

@@ -388,6 +388,7 @@ type Router struct {
 	outboundProxies OutboundProxyService
 	smartDiscovery  SmartDiscoveryService
 	smartPreview    SmartSearchPreviewer
+	accountEvents   AccountEventService
 	// aclStore 为 API Key 来源白名单仓储。
 	aclStore ACLStore
 	// rateLimitStore 为 API Key 限流配置仓储。
@@ -488,6 +489,7 @@ type Deps struct {
 	OutboundProxies OutboundProxyService
 	SmartDiscovery  SmartDiscoveryService
 	SmartPreview    SmartSearchPreviewer
+	AccountEvents   AccountEventService
 	ACLStore        ACLStore
 	RateLimitStore  RateLimitStore
 	ToolRiskStore   ToolRiskStore
@@ -527,6 +529,7 @@ func NewRouter(d Deps) *Router {
 		outboundProxies: d.OutboundProxies,
 		smartDiscovery:  d.SmartDiscovery,
 		smartPreview:    d.SmartPreview,
+		accountEvents:   d.AccountEvents,
 		aclStore:        d.ACLStore,
 		rateLimitStore:  d.RateLimitStore,
 		toolRiskStore:   d.ToolRiskStore,
@@ -572,6 +575,7 @@ func (r *Router) Register(router gin.IRouter, adminAuth gin.HandlerFunc) {
 	r.registerAPIKeyRoutes(admin)
 	r.registerOutboundProxyRoutes(admin)
 	r.registerSmartDiscoveryRoutes(admin)
+	r.registerAccountEventRoutes(admin)
 	r.registerAIRiskRoutes(admin)
 	r.registerSettingsRoutes(admin)
 	r.registerBackupRoutes(admin)

@@ -154,6 +154,7 @@ type Service struct {
 	searchKeywordsFn    func(originalName, description string) (string, []string)
 	accountLimitMu      sync.Mutex
 	accountLimits       map[string]accountLimitState
+	accountEvents       AccountEventRecorder
 	// routingStrategy 为同名工具多来源时的调用选择策略。
 	routingStrategy        domain.ToolRoutingStrategy
 	routingMu              sync.RWMutex
@@ -776,6 +777,7 @@ func (s *Service) InvokeTool(ctx context.Context, apiKeyID, exposedName string, 
 			return result, callErr
 		}
 		s.markAccountLimited(candidate.UpstreamID, rejection)
+		s.recordAccountEvent(ctx, candidate, rejection)
 		tried[sourceFailureKey(candidate)] = struct{}{}
 		log.Warn("上游账号拒绝调用，切换下一个账号", "exposedName", exposedName, "upstreamID", candidate.UpstreamID,
 			"upstreamName", candidate.UpstreamName, "kind", rejection.Kind, "status", rejection.Status, "cooldown", rejection.Cooldown.String())

@@ -200,3 +200,46 @@ func TestInvokeDoesNotFailOverOrdinaryErrors(t *testing.T) {
 		t.Fatalf("连接失败（请求可能已发出）不应自动重试：%v %v", err, invoker2.called())
 	}
 }
+
+type memEventRecorder struct {
+	mu     sync.Mutex
+	events []domain.AccountEvent
+}
+
+func (r *memEventRecorder) Insert(_ context.Context, ev domain.AccountEvent) error {
+	r.mu.Lock()
+	r.events = append(r.events, ev)
+	r.mu.Unlock()
+	return nil
+}
+
+func (r *memEventRecorder) snapshot() []domain.AccountEvent {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]domain.AccountEvent(nil), r.events...)
+}
+
+func TestInvokeRecordsAccountEventOnRejection(t *testing.T) {
+	invoker := &scriptedInvoker{byUp: map[string]domain.ToolResult{"tav-1": textResult(false, tavily429)}}
+	svc := failoverService(invoker, "tav-1", "tav-2")
+	rec := &memEventRecorder{}
+	svc.SetAccountEventRecorder(rec)
+	for range 2 {
+		if _, err := svc.InvokeTool(context.Background(), "", "search", json.RawMessage(`{}`)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for len(rec.snapshot()) == 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	evs := rec.snapshot()
+	if len(evs) != 1 || evs[0].UpstreamID != "tav-1" || evs[0].Kind != RejectionRateLimited || evs[0].HTTPStatus != 429 ||
+		evs[0].Tool != "search" || evs[0].Source != "call" {
+		t.Fatalf("账号被拒时应写入一条记录（之后冷却跳过不再记录）：%+v", evs)
+	}
+	svc.ClearAccountLimit("tav-1")
+	if len(svc.AccountLimits()) != 0 {
+		t.Fatal("清除后应结束冷却")
+	}
+}

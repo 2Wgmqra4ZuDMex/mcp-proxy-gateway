@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 
@@ -43,7 +44,24 @@ func newStdioSession(cfg domain.UpstreamConfig) (UpstreamSession, error) {
 // 说明（Req 4.7）：stdio 传输无 HTTP 头通道，鉴权凭证按上游约定通常以命令行参数或环境变量传入，
 // 此处不强制注入；凭证语义对 HTTP 类传输（SSE/Streamable-HTTP/WebSocket）生效。
 func (s *stdioSession) Connect(ctx context.Context) error {
-	return s.establish(ctx, func(dialCtx context.Context) (mcpClientConn, error) {
+	var corrupt string
+	err := s.establish(ctx, s.dial(&corrupt))
+	if err == nil || corrupt == "" {
+		return err
+	}
+	// npx 缓存安装不完整（例如安装中途断电）：删掉该缓存目录后重试一次，npx 会重新下载。
+	if rmErr := removeNpxCacheDir(corrupt); rmErr != nil {
+		slog.Warn("检测到损坏的 npx 缓存但未能清理", "dir", corrupt, "error", rmErr)
+		return err
+	}
+	slog.Warn("检测到损坏的 npx 缓存，已清理并重试启动", "upstream", s.cfg.Name, "dir", corrupt)
+	return s.establish(ctx, s.dial(nil))
+}
+
+// dial 返回启动子进程并完成握手的连接回调。corrupt 非空时，若启动失败的原因是 npx 缓存
+// 损坏，会写入损坏的缓存目录。
+func (s *stdioSession) dial(corrupt *string) func(dialCtx context.Context) (mcpClientConn, error) {
+	return func(dialCtx context.Context) (mcpClientConn, error) {
 		// 注意：刻意使用 exec.Command 而非 exec.CommandContext。dialCtx 仅约束连接建立阶段，
 		// establish 在连接成功后会立即取消它；若将子进程绑定到 dialCtx，进程会被随之杀死。
 		// 子进程生命周期应等同于会话生命周期，由 CommandTransport 在 Close 时关闭 stdin 优雅终止
@@ -167,7 +185,11 @@ func (s *stdioSession) Connect(ctx context.Context) error {
 			if verifiedScript != nil {
 				verifiedScript.close()
 			}
-			return nil, withStderrTail(err, stderrTail.tail())
+			tail := stderrTail.tail()
+			if corrupt != nil {
+				*corrupt = corruptNpxCacheDir(tail)
+			}
+			return nil, withStderrTail(err, tail)
 		}
 		// 包装 close：SDK 关闭后按进程组清理孙进程，并释放脚本 FD/快照。
 		return &stdioClientConn{
@@ -176,7 +198,7 @@ func (s *stdioSession) Connect(ctx context.Context) error {
 			hardening:      hardening,
 			verifiedScript: verifiedScript,
 		}, nil
-	})
+	}
 }
 
 // stdioClientConn 装饰 mcpClientConn，在 close 时清理进程树。

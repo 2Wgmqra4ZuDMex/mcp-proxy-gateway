@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import AdminLayout from '@/components/layout/AdminLayout.vue'
 import PageBreadcrumb from '@/components/common/PageBreadcrumb.vue'
 import { ChevronDownIcon } from '@/icons'
@@ -10,8 +10,125 @@ import { useToast } from '@/composables/useToast'
 import { groupUpstreamsByAccount } from '@/utils/accountGroups'
 import { serviceNameOf } from '@/utils/toolAccessGroups'
 import { buildProbeArgs, pickProbeTool } from '@/utils/mcpCheck'
+import {
+  accountEventKindLabel,
+  clearAccountEvents,
+  getAccountEvents,
+  type AccountEventStatus,
+} from '@/api/accountEvents'
+import { useConfirm } from '@/composables/useConfirm'
 
 const toast = useToast()
+const { confirm } = useConfirm()
+
+// ── 账号异常记录 ────────────────────────────────────────────────────────────
+const accountStatus = ref<AccountEventStatus>({ cooldowns: [], accounts: [], events: [] })
+const accountLoading = ref(false)
+const expandedAccounts = ref<Set<string>>(new Set())
+const nowTick = ref(Date.now())
+let tickTimer: ReturnType<typeof setInterval> | null = null
+
+async function loadAccountEvents(): Promise<void> {
+  accountLoading.value = true
+  try {
+    accountStatus.value = await getAccountEvents()
+    nowTick.value = Date.now()
+  } catch (err) {
+    toast.error(err instanceof Error ? err.message : '读取账号异常记录失败')
+  } finally {
+    accountLoading.value = false
+  }
+}
+
+const upstreamNameById = computed(() => {
+  const map = new Map<string, string>()
+  for (const up of upstreams.value) map.set(up.id, up.config.name)
+  return map
+})
+
+function accountName(id: string, fallback = ''): string {
+  return upstreamNameById.value.get(id) ?? (fallback || id.slice(0, 8))
+}
+
+const cooldownById = computed(() => {
+  const map = new Map<string, AccountEventStatus['cooldowns'][number]>()
+  for (const c of accountStatus.value.cooldowns) {
+    if (new Date(c.until).getTime() > nowTick.value) map.set(c.upstreamId, c)
+  }
+  return map
+})
+
+/** 有记录的账号，以及只在冷却中、尚无持久记录的账号。 */
+const problemAccounts = computed(() => {
+  const rows = accountStatus.value.accounts.map((a) => ({
+    ...a,
+    cooling: cooldownById.value.get(a.upstreamId),
+  }))
+  for (const [id, c] of cooldownById.value) {
+    if (!rows.some((r) => r.upstreamId === id)) {
+      rows.unshift({
+        upstreamId: id,
+        upstreamName: '',
+        last24h: 0,
+        last7d: 0,
+        lastKind: c.kind,
+        lastMessage: c.message,
+        lastAt: '',
+        cooling: c,
+      })
+    }
+  }
+  return rows.sort((a, b) => Number(Boolean(b.cooling)) - Number(Boolean(a.cooling)))
+})
+
+function eventsOf(id: string) {
+  return accountStatus.value.events.filter((e) => e.upstreamId === id).slice(0, 20)
+}
+
+function toggleAccount(id: string): void {
+  const next = new Set(expandedAccounts.value)
+  if (next.has(id)) next.delete(id)
+  else next.add(id)
+  expandedAccounts.value = next
+}
+
+function remaining(until: string): string {
+  const s = Math.max(0, Math.round((new Date(until).getTime() - nowTick.value) / 1000))
+  return s >= 60 ? `约 ${Math.ceil(s / 60)} 分钟` : `${s} 秒`
+}
+
+function ago(at: string): string {
+  if (!at) return ''
+  const s = Math.max(0, Math.round((nowTick.value - new Date(at).getTime()) / 1000))
+  if (s < 60) return `${s} 秒前`
+  if (s < 3600) return `${Math.round(s / 60)} 分钟前`
+  if (s < 86400) return `${Math.round(s / 3600)} 小时前`
+  return `${Math.round(s / 86400)} 天前`
+}
+
+async function clearAccount(id?: string): Promise<void> {
+  const ok = await confirm({
+    title: id ? '清除该账号的记录' : '清除全部账号异常记录',
+    message:
+      '会删除异常记录，并让正在冷却的账号立即恢复参与轮询。账号如果仍有问题，下次被拒时会重新记录。',
+    confirmText: '清除',
+    tone: 'warning',
+  })
+  if (!ok) return
+  try {
+    await clearAccountEvents(id)
+    toast.success('已清除')
+    await loadAccountEvents()
+  } catch (err) {
+    toast.error(err instanceof Error ? err.message : '清除失败')
+  }
+}
+
+const kindTone: Record<string, string> = {
+  rate_limited: 'bg-warning-50 text-warning-700 dark:bg-warning-500/15 dark:text-warning-400',
+  quota_exhausted: 'bg-error-50 text-error-700 dark:bg-error-500/15 dark:text-error-400',
+  unauthorized: 'bg-error-50 text-error-700 dark:bg-error-500/15 dark:text-error-400',
+}
 
 const PROBE_STORAGE_KEY = 'mpg.mcpCheck.probes'
 const CONCURRENCY = 3
@@ -122,7 +239,16 @@ async function load(): Promise<void> {
   }
 }
 
-onMounted(load)
+onMounted(() => {
+  void load()
+  void loadAccountEvents()
+  tickTimer = setInterval(() => {
+    nowTick.value = Date.now()
+  }, 5000)
+})
+onBeforeUnmount(() => {
+  if (tickTimer !== null) clearInterval(tickTimer)
+})
 
 function parseProbe(key: string): { tool: string; args: Record<string, unknown> } | null {
   const probe = probes[key]
@@ -315,6 +441,127 @@ const inputClass =
       </div>
     </section>
 
+    <section :class="[cardClass, 'mt-4']">
+      <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div class="min-w-0">
+          <h3 class="text-base font-semibold text-gray-800 dark:text-white/90">账号异常</h3>
+          <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+            调用或检测时被上游拒绝（限流、额度不足、Key 无效或无权限）的账号会记录在这里，保留 30
+            天。被拒的账号会暂停参与轮询一段时间：限流 1 分钟，其余 10 分钟。
+          </p>
+        </div>
+        <div class="flex shrink-0 gap-2">
+          <button
+            type="button"
+            class="text-brand-600 dark:text-brand-400 text-sm font-medium hover:underline disabled:opacity-50"
+            :disabled="accountLoading"
+            @click="loadAccountEvents"
+          >
+            {{ accountLoading ? '刷新中…' : '刷新' }}
+          </button>
+          <button
+            v-if="problemAccounts.length > 0"
+            type="button"
+            class="text-error-500 text-sm font-medium hover:underline"
+            @click="clearAccount()"
+          >
+            全部清除
+          </button>
+        </div>
+      </div>
+      <p
+        v-if="problemAccounts.length === 0"
+        class="bg-success-50 text-success-700 dark:bg-success-500/10 dark:text-success-400 mt-4 rounded-lg px-4 py-2.5 text-sm"
+      >
+        近 7 天没有账号被拒，全部正常。
+      </p>
+      <div v-else class="mt-4 space-y-2">
+        <div
+          v-for="acc in problemAccounts"
+          :key="acc.upstreamId"
+          class="overflow-hidden rounded-xl border border-gray-100 dark:border-gray-800"
+        >
+          <div class="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-start">
+            <button
+              type="button"
+              class="flex min-w-0 flex-1 items-start gap-3 text-left"
+              :aria-expanded="expandedAccounts.has(acc.upstreamId)"
+              @click="toggleAccount(acc.upstreamId)"
+            >
+              <ChevronDownIcon
+                class="mt-0.5 h-4 w-4 shrink-0 text-gray-400 transition-transform"
+                :class="expandedAccounts.has(acc.upstreamId) ? '' : '-rotate-90'"
+                aria-hidden="true"
+              />
+              <span class="min-w-0 flex-1">
+                <span class="flex flex-wrap items-center gap-2">
+                  <span class="text-sm font-semibold text-gray-800 dark:text-white/90">{{
+                    accountName(acc.upstreamId, acc.upstreamName)
+                  }}</span>
+                  <span
+                    class="rounded-full px-2 py-0.5 text-[11px] font-medium"
+                    :class="kindTone[acc.lastKind]"
+                  >
+                    {{ accountEventKindLabel[acc.lastKind]
+                    }}<template v-if="acc.lastStatus"> · {{ acc.lastStatus }}</template>
+                  </span>
+                  <span
+                    v-if="acc.cooling"
+                    class="bg-warning-50 text-warning-700 dark:bg-warning-500/15 dark:text-warning-400 rounded-full px-2 py-0.5 text-[11px]"
+                    >暂停中 · {{ remaining(acc.cooling.until) }}后恢复</span
+                  >
+                  <span v-else class="text-xs text-gray-400">已恢复轮询</span>
+                </span>
+                <span class="mt-1 block text-xs text-gray-500 dark:text-gray-400">
+                  <template v-if="acc.lastAt">
+                    24 小时内 {{ acc.last24h }} 次 · 7 天内 {{ acc.last7d }} 次 · 最近
+                    {{ ago(acc.lastAt)
+                    }}<template v-if="acc.lastTool">（{{ acc.lastTool }}）</template>
+                  </template>
+                  <template v-else>刚被拒，记录写入中</template>
+                </span>
+                <span class="mt-1 line-clamp-2 block text-xs break-all text-gray-400">{{
+                  acc.lastMessage
+                }}</span>
+              </span>
+            </button>
+            <button
+              type="button"
+              class="text-error-500 shrink-0 self-start text-xs hover:underline sm:mt-0.5"
+              @click="clearAccount(acc.upstreamId)"
+            >
+              清除
+            </button>
+          </div>
+          <ol
+            v-if="expandedAccounts.has(acc.upstreamId)"
+            class="divide-y divide-gray-100 border-t border-gray-100 dark:divide-gray-800 dark:border-gray-800"
+          >
+            <li v-for="ev in eventsOf(acc.upstreamId)" :key="ev.id" class="px-4 py-2 text-xs">
+              <span class="text-gray-500 dark:text-gray-400">{{
+                new Date(ev.occurredAt).toLocaleString('zh-CN')
+              }}</span>
+              <span class="ml-2 rounded px-1.5 py-0.5" :class="kindTone[ev.kind]"
+                >{{ accountEventKindLabel[ev.kind]
+                }}<template v-if="ev.httpStatus"> {{ ev.httpStatus }}</template></span
+              >
+              <span class="ml-2 text-gray-500"
+                >{{ ev.source === 'check' ? 'MCP 检测' : '调用'
+                }}<template v-if="ev.tool"> · {{ ev.tool }}</template></span
+              >
+              <span class="mt-1 block break-all text-gray-400">{{ ev.message }}</span>
+            </li>
+            <li
+              v-if="eventsOf(acc.upstreamId).length === 0"
+              class="px-4 py-2 text-xs text-gray-400"
+            >
+              暂无持久记录（只有冷却状态）。
+            </li>
+          </ol>
+        </div>
+      </div>
+    </section>
+
     <div class="mt-4 space-y-3">
       <section
         v-for="group in groups"
@@ -429,6 +676,13 @@ const inputClass =
                   up.config.name
                 }}</span>
                 <span v-if="!up.config.enabled" class="shrink-0 text-xs text-gray-400">已停用</span>
+                <span
+                  v-if="cooldownById.get(up.id)"
+                  v-tooltip="cooldownById.get(up.id)!.message"
+                  class="bg-warning-50 text-warning-700 dark:bg-warning-500/15 dark:text-warning-400 shrink-0 rounded-full px-2 py-0.5 text-[11px]"
+                  >{{ accountEventKindLabel[cooldownById.get(up.id)!.kind] }} ·
+                  {{ remaining(cooldownById.get(up.id)!.until) }}后恢复</span
+                >
               </div>
               <span
                 class="w-fit rounded-full px-2.5 py-0.5 text-xs font-medium"

@@ -1,6 +1,7 @@
 package aggregation
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"regexp"
@@ -151,6 +152,35 @@ func atoiStatus(s string) int {
 	return n
 }
 
+// AccountEventRecorder 持久化账号异常记录（实现应快速返回或自行异步）。
+type AccountEventRecorder interface {
+	Insert(ctx context.Context, ev domain.AccountEvent) error
+}
+
+// SetAccountEventRecorder 注入账号异常记录器，仅在装配阶段调用。
+func (s *Service) SetAccountEventRecorder(r AccountEventRecorder) *Service {
+	s.accountEvents = r
+	return s
+}
+
+// recordAccountEvent 在后台写入一条账号异常记录，失败只记日志，不影响调用。
+func (s *Service) recordAccountEvent(ctx context.Context, c ToolCandidate, r AccountRejection) {
+	if s.accountEvents == nil {
+		return
+	}
+	ev := domain.AccountEvent{UpstreamID: c.UpstreamID, UpstreamName: c.UpstreamName, Kind: r.Kind, HTTPStatus: r.Status,
+		Message: r.Message, Tool: c.OriginalName, Source: "call", OccurredAt: s.currentTime().UTC()}
+	recorder := s.accountEvents
+	base := context.WithoutCancel(ctx)
+	go func() {
+		writeCtx, cancel := context.WithTimeout(base, 5*time.Second)
+		defer cancel()
+		if err := recorder.Insert(writeCtx, ev); err != nil {
+			s.logger().Warn("写入账号异常记录失败", "upstreamID", ev.UpstreamID, "error", err)
+		}
+	}()
+}
+
 type accountLimitState struct {
 	Until   time.Time
 	Kind    string
@@ -180,6 +210,17 @@ func (s *Service) accountLimited(upstreamID string) bool {
 		return false
 	}
 	return true
+}
+
+// ClearAccountLimit 立即结束账号冷却；upstreamID 为空时结束全部。
+func (s *Service) ClearAccountLimit(upstreamID string) {
+	s.accountLimitMu.Lock()
+	defer s.accountLimitMu.Unlock()
+	if upstreamID == "" {
+		s.accountLimits = nil
+		return
+	}
+	delete(s.accountLimits, upstreamID)
 }
 
 // AccountLimitView 为管理台展示的账号冷却状态。

@@ -81,8 +81,20 @@ func (t upstreamTester) Check(ctx context.Context, id string, cfg domain.Upstrea
 	if rejection, rejected := aggregation.DetectAccountRejection(res, nil); rejected {
 		call.OK = false
 		call.Message = accountRejectionLabel(rejection.Kind) + "：" + call.Preview
+		t.recordCheckEvent(ctx, id, cfg.Name, probe.Tool, rejection)
 	}
 	return result, nil
+}
+
+func (t upstreamTester) recordCheckEvent(ctx context.Context, id, name, tool string, r aggregation.AccountRejection) {
+	if t.events == nil {
+		return
+	}
+	ev := domain.AccountEvent{UpstreamID: id, UpstreamName: name, Kind: r.Kind, HTTPStatus: r.Status, Message: r.Message,
+		Tool: tool, Source: "check", OccurredAt: time.Now().UTC()}
+	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	_ = t.events.Insert(writeCtx, ev)
 }
 
 func accountRejectionLabel(kind string) string {
