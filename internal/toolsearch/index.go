@@ -1,6 +1,7 @@
 package toolsearch
 
 import (
+	"math"
 	"sort"
 	"strings"
 	"unicode"
@@ -29,6 +30,7 @@ const (
 	phraseBonus           = 0.5
 	maxPhraseBonusHits    = 4
 	hanCharWeight         = 0.4
+	rareCharWeight        = 1.5
 	maxKeywordPhrases     = 40
 	maxKeywordPhraseRunes = 40
 	maxExtraWords         = 20000
@@ -86,6 +88,9 @@ type Index struct {
 	allTokens map[string]int
 	// extraWords 为所有文档 AI 关键词中的中文词，查询与文档用同一份词表切分。
 	extraWords map[string]struct{}
+	// docFreq / charFreq 为词元与汉字出现在多少个工具中，用于降低常见词的权重。
+	docFreq  map[string]int
+	charFreq map[rune]int
 }
 
 // Build creates a reusable index for a tool collection. Input order is kept
@@ -102,6 +107,8 @@ func Build(docs []Doc) *Index {
 		indexed:    make([]indexedDoc, 0, len(safeDocs)),
 		allTokens:  make(map[string]int),
 		extraWords: make(map[string]struct{}),
+		docFreq:    make(map[string]int),
+		charFreq:   make(map[rune]int),
 	}
 	docPhrases := make([][]string, len(safeDocs))
 	for index, doc := range safeDocs {
@@ -114,6 +121,11 @@ func Build(docs []Doc) *Index {
 			phrases = append(phrases, phrase)
 			if isHanWord(phrase) && len(ix.extraWords) < maxExtraWords {
 				ix.extraWords[phrase] = struct{}{}
+				// 四字关键词通常由两个词组成（"整站爬取"="整站"+"爬取"），两半也作为补充词。
+				if r := []rune(phrase); len(r) == 4 {
+					ix.extraWords[string(r[:2])] = struct{}{}
+					ix.extraWords[string(r[2:])] = struct{}{}
+				}
 			}
 		}
 		docPhrases[index] = phrases
@@ -169,6 +181,19 @@ func Build(docs []Doc) *Index {
 		}
 		for token := range unique {
 			ix.allTokens[token]++
+		}
+		last := &ix.indexed[len(ix.indexed)-1]
+		seen := make(map[string]struct{}, len(unique)+len(last.kwTokens)+len(last.descTokens))
+		for _, field := range []map[string]struct{}{name, orig, up, last.kwTokens, last.descTokens} {
+			for token := range field {
+				if _, dup := seen[token]; !dup {
+					seen[token] = struct{}{}
+					ix.docFreq[token]++
+				}
+			}
+		}
+		for r := range hanChars {
+			ix.charFreq[r]++
 		}
 		// Index only needs names and upstream names after preprocessing. Drop
 		// large raw fields so a cached index does not retain both an upstream
@@ -232,17 +257,23 @@ func (ix *Index) Search(query string, limit, offset int) Result {
 				}
 			}
 			if best == 0 {
-				// 中文单字（如"截个图"中的"图"）只在文档含该字时给少量分，不计入覆盖数，
-				// 避免单字把无关工具排到前面。
+				// 未成词的中文单字（如"截屏"中的"截"）：只出现在少数工具里的字算作命中，
+				// 常见字只给少量分且不计入覆盖，避免把无关工具排到前面。
 				if r := []rune(term); len(r) == 1 && unicode.Is(unicode.Han, r[0]) {
 					if _, ok := doc.hanChars[r[0]]; ok {
-						score += hanCharWeight
+						if ix.rareChar(r[0]) {
+							covered++
+							score += rareCharWeight * ix.idf(ix.charFreq[r[0]])
+							matched = append(matched, term)
+						} else {
+							score += hanCharWeight
+						}
 					}
 				}
 				continue
 			}
 			covered++
-			score += best
+			score += best * ix.idf(ix.docFreq[term])
 			matched = append(matched, term)
 		}
 		score += phraseBonus * float64(min(len(phraseHits), maxPhraseBonusHits))
@@ -277,6 +308,22 @@ func matchedPhrases(phrases []string, rawQuery, compactQuery string, compactRune
 		}
 	}
 	return hits
+}
+
+// idf 为出现在 df 个工具中的词的权重：越常见越低，取值约在 0.3～2 之间。
+func (ix *Index) idf(df int) float64 {
+	n := len(ix.indexed)
+	if n == 0 {
+		return 1
+	}
+	if df <= 0 {
+		df = 1
+	}
+	return max(0.3, 0.5+math.Log(float64(n+1)/float64(df+1))/math.Log(float64(n+1)))
+}
+
+func (ix *Index) rareChar(r rune) bool {
+	return ix.charFreq[r] <= max(2, len(ix.indexed)/10)
 }
 
 func (ix *Index) fieldBest(doc indexedDoc, term string) float64 {

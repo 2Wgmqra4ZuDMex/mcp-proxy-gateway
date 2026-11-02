@@ -19,7 +19,10 @@ func TestSearchMatchesChineseThroughAIKeywords(t *testing.T) {
 		t.Fatalf("应命中编程文档工具：%+v", got)
 	}
 	without := Build([]Doc{{Name: "firecrawl_scrape", Description: "Scrape one URL and return its content."}})
-	if res := without.Search("抓取网页内容", 3, 0); res.Total != 0 {
-		t.Fatalf("没有关键词时中文查询不应命中英文描述：%+v", res)
+	if res := without.Search("抓取网页内容", 3, 0); res.Total == 0 {
+		t.Fatalf("常用中文词内置了英文对照，没有 AI 关键词也应命中：%+v", res)
+	}
+	if res := without.Search("整理报销单", 3, 0); res.Total != 0 {
+		t.Fatalf("无关的中文查询不应命中英文描述：%+v", res)
 	}
 }
