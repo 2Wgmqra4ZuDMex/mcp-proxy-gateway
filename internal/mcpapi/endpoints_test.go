@@ -335,3 +335,56 @@ func TestEndpointsWebSocketFullMode(t *testing.T) {
 		t.Fatalf("应按已鉴权 API Key 视角构建 server，got=%v", agg.gotBuildIDs)
 	}
 }
+
+// epToolCount 连接端点并返回 tools/list 的工具数量。
+func epToolCount(t *testing.T, transport mcp.Transport) int {
+	t.Helper()
+	cs := epConnectClient(t, transport)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	listed, err := cs.ListTools(ctx, nil)
+	if err != nil {
+		t.Fatalf("tools/list 失败：%v", err)
+	}
+	return len(listed.Tools)
+}
+
+// TestDefaultEndpointsFollowDefaultMode 验证 /mcp/http、/mcp/sse、/mcp/ws 跟随默认接入模式，
+// /mcp/full/* 与 /mcp/smart/* 不受影响。
+func TestDefaultEndpointsFollowDefaultMode(t *testing.T) {
+	agg := &epFakeAggregation{buildResult: epToolDefs()}
+	var eps *Endpoints
+	srv := epNewTestServer(t, agg, func(e *Endpoints) { eps = e })
+	wsBase := "ws" + strings.TrimPrefix(srv.URL, "http")
+	full, smart := len(epToolDefs()), 4
+
+	if got := epToolCount(t, &mcp.StreamableClientTransport{Endpoint: srv.URL + PathHTTP + "?api_key=k"}); got != full {
+		t.Fatalf("未设置时默认端点保持全量模式，got=%d", got)
+	}
+	eps.SetDefaultMode(ModeSmart)
+	if eps.DefaultMode() != ModeSmart {
+		t.Fatalf("默认模式应为 smart，got=%q", eps.DefaultMode())
+	}
+	cases := []struct {
+		name      string
+		transport mcp.Transport
+		want      int
+	}{
+		{"http 跟随默认", &mcp.StreamableClientTransport{Endpoint: srv.URL + PathHTTP + "?api_key=k"}, smart},
+		{"sse 跟随默认", &mcp.SSEClientTransport{Endpoint: srv.URL + PathSSE + "?api_key=k"}, smart},
+		{"ws 跟随默认", &epWSClientTransport{endpoint: wsBase + PathWS + "?api_key=k"}, smart},
+		{"full/http 固定全量", &mcp.StreamableClientTransport{Endpoint: srv.URL + PathFullHTTP + "?api_key=k"}, full},
+		{"full/sse 固定全量", &mcp.SSEClientTransport{Endpoint: srv.URL + PathFullSSE + "?api_key=k"}, full},
+		{"full/ws 固定全量", &epWSClientTransport{endpoint: wsBase + PathFullWS + "?api_key=k"}, full},
+		{"smart/http 固定智能", &mcp.StreamableClientTransport{Endpoint: srv.URL + PathSmartHTTP + "?api_key=k"}, smart},
+	}
+	for _, tc := range cases {
+		if got := epToolCount(t, tc.transport); got != tc.want {
+			t.Fatalf("%s：want %d tools, got %d", tc.name, tc.want, got)
+		}
+	}
+	eps.SetDefaultMode("bogus")
+	if eps.DefaultMode() != ModeFull {
+		t.Fatalf("非法值应按全量处理，got=%q", eps.DefaultMode())
+	}
+}

@@ -47,6 +47,12 @@ const (
 	PathSmartHTTP = "/mcp/smart/http"
 	// PathSmartWS 为智能模式 WebSocket 传输端点路径。
 	PathSmartWS = "/mcp/smart/ws"
+
+	// PathFullSSE / PathFullHTTP / PathFullWS 为固定全量模式的端点路径；
+	// PathSSE / PathHTTP / PathWS 则跟随"默认接入模式"设置。
+	PathFullSSE  = "/mcp/full/sse"
+	PathFullHTTP = "/mcp/full/http"
+	PathFullWS   = "/mcp/full/ws"
 )
 
 // wsServerReadLimit 为对外 WebSocket 单条消息的最大字节数。
@@ -100,6 +106,8 @@ type Endpoints struct {
 	httpHandler *mcp.StreamableHTTPHandler
 
 	requestBodyLimitBytes atomic.Int64
+	// defaultMode 为 /mcp/sse、/mcp/http、/mcp/ws 使用的模式（ModeFull 或 ModeSmart）。
+	defaultMode atomic.Value
 }
 
 // NewEndpoints 构造对外多传输端点接线。
@@ -113,9 +121,33 @@ func NewEndpoints(svc *Service, resolveKey APIKeyResolver, logger *slog.Logger) 
 	}
 	e := &Endpoints{svc: svc, resolveKey: resolveKey, logger: logger}
 	e.requestBodyLimitBytes.Store(defaultRequestBodyLimitBytes)
+	e.defaultMode.Store(ModeFull)
 	e.sseHandler = mcp.NewSSEHandler(e.getServer, nil)
 	e.httpHandler = mcp.NewStreamableHTTPHandler(e.getServer, nil)
 	return e
+}
+
+// SetDefaultMode 设置 /mcp/sse、/mcp/http、/mcp/ws 的接入模式（smart 或 full），运行期立即生效；
+// 已建立的会话保持原模式。非法值按全量模式处理。
+func (e *Endpoints) SetDefaultMode(mode string) {
+	if e == nil {
+		return
+	}
+	if mode != ModeSmart {
+		mode = ModeFull
+	}
+	e.defaultMode.Store(mode)
+}
+
+// DefaultMode 返回当前默认接入模式。
+func (e *Endpoints) DefaultMode() string {
+	if e == nil {
+		return ModeFull
+	}
+	if mode, ok := e.defaultMode.Load().(string); ok && mode != "" {
+		return mode
+	}
+	return ModeFull
 }
 
 // SetRequestBodyLimitMiB updates the public MCP POST body limit at runtime.
@@ -139,7 +171,7 @@ func (e *Endpoints) setRequestBodyLimitBytes(limit int64) {
 	e.requestBodyLimitBytes.Store(limit)
 }
 
-// Register 在给定 gin 路由组上注册三个对外传输端点。
+// Register 在给定 gin 路由组上注册默认端点（跟随默认接入模式）与固定全量模式端点。
 //
 // 调用方须在传入的路由组上预先挂载 API Key 鉴权、来源白名单与限流中间件，使本端点始终在
 // 鉴权之后执行（Req 11.9）。SSE 与 Streamable-HTTP 支持 GET/POST（Streamable 还支持 DELETE
@@ -153,7 +185,30 @@ func (e *Endpoints) Register(rg gin.IRoutes) {
 	rg.DELETE(PathHTTP, e.handleHTTP)
 
 	rg.GET(PathWS, e.handleWS)
+
+	rg.GET(PathFullSSE, e.handleFullSSE)
+	rg.POST(PathFullSSE, e.handleFullSSE)
+	rg.GET(PathFullHTTP, e.handleFullHTTP)
+	rg.POST(PathFullHTTP, e.handleFullHTTP)
+	rg.DELETE(PathFullHTTP, e.handleFullHTTP)
+	rg.GET(PathFullWS, e.handleFullWS)
 }
+
+func (e *Endpoints) handleFullSSE(c *gin.Context) {
+	if !e.limitRequestBody(c) {
+		return
+	}
+	e.sseHandler.ServeHTTP(c.Writer, e.withAPIKey(c, ModeFull))
+}
+
+func (e *Endpoints) handleFullHTTP(c *gin.Context) {
+	if !e.limitRequestBody(c) {
+		return
+	}
+	e.httpHandler.ServeHTTP(c.Writer, e.withAPIKey(c, ModeFull))
+}
+
+func (e *Endpoints) handleFullWS(c *gin.Context) { e.serveWS(c, ModeFull) }
 
 // getServer 是 SDK SSE / Streamable-HTTP handler 的 server 构建回调。
 //
@@ -196,7 +251,7 @@ func (e *Endpoints) handleSSE(c *gin.Context) {
 	if !e.limitRequestBody(c) {
 		return
 	}
-	e.sseHandler.ServeHTTP(c.Writer, e.withAPIKey(c, ModeFull))
+	e.sseHandler.ServeHTTP(c.Writer, e.withAPIKey(c, e.DefaultMode()))
 }
 
 // handleHTTP 以 Streamable-HTTP 传输对外暴露聚合能力（Req 11.8）。委派给 SDK 的
@@ -205,7 +260,7 @@ func (e *Endpoints) handleHTTP(c *gin.Context) {
 	if !e.limitRequestBody(c) {
 		return
 	}
-	e.httpHandler.ServeHTTP(c.Writer, e.withAPIKey(c, ModeFull))
+	e.httpHandler.ServeHTTP(c.Writer, e.withAPIKey(c, e.DefaultMode()))
 }
 
 func (e *Endpoints) limitRequestBody(c *gin.Context) bool {
@@ -263,7 +318,10 @@ func headerHasToken(header http.Header, key, token string) bool {
 // 运行。鉴权已在前置中间件完成（Req 11.9），此处仅在升级成功后取 API Key 视角构建 server。
 //
 // 该处理器会阻塞至会话结束（连接关闭或上下文取消），符合 WS 长连接语义。
-func (e *Endpoints) handleWS(c *gin.Context) {
+func (e *Endpoints) handleWS(c *gin.Context) { e.serveWS(c, e.DefaultMode()) }
+
+// serveWS 完成 WebSocket 升级并以指定模式运行一个 MCP 会话，阻塞至会话结束。
+func (e *Endpoints) serveWS(c *gin.Context, mode string) {
 	apiKeyID := ""
 	if e.resolveKey != nil {
 		if id, ok := e.resolveKey(c); ok {
@@ -274,9 +332,9 @@ func (e *Endpoints) handleWS(c *gin.Context) {
 		return
 	}
 
-	srv, err := e.svc.BuildServer(c.Request.Context(), apiKeyID, ModeFull)
+	srv, err := e.svc.BuildServer(c.Request.Context(), apiKeyID, mode)
 	if err != nil {
-		e.logger.Warn("构建对外 MCP 服务端失败", "apiKeyID", apiKeyID, "error", err)
+		e.logger.Warn("构建对外 MCP 服务端失败", "apiKeyID", apiKeyID, "mode", mode, "error", err)
 		// 升级前失败：以普通 HTTP 错误响应，尚未切换协议。
 		c.AbortWithStatus(http.StatusInternalServerError)
 		return
@@ -392,45 +450,4 @@ func (e *Endpoints) handleSmartHTTP(c *gin.Context) {
 	e.httpHandler.ServeHTTP(c.Writer, e.withAPIKey(c, ModeSmart))
 }
 
-func (e *Endpoints) handleSmartWS(c *gin.Context) {
-	apiKeyID := ""
-	if e.resolveKey != nil {
-		if id, ok := e.resolveKey(c); ok {
-			apiKeyID = id
-		}
-	}
-	if !requireWebSocketUpgrade(c) {
-		return
-	}
-
-	srv, err := e.svc.BuildServer(c.Request.Context(), apiKeyID, ModeSmart)
-	if err != nil {
-		e.logger.Warn("构建智能模式 MCP 服务端失败", "apiKeyID", apiKeyID, "error", err)
-		c.AbortWithStatus(http.StatusInternalServerError)
-		return
-	}
-
-	conn, err := websocket.Accept(c.Writer, c.Request, nil)
-	if err != nil {
-		e.logger.Warn("智能模式 WebSocket 升级失败", "apiKeyID", apiKeyID, "error", err)
-		return
-	}
-	conn.SetReadLimit(wsServerReadLimit)
-
-	connCtx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	transport := &wsServerTransport{conn: &wsServerConn{conn: conn, ctx: connCtx, cancel: cancel}}
-
-	session, err := srv.Connect(c.Request.Context(), transport, nil)
-	if err != nil {
-		e.logger.Warn("智能模式 WebSocket 会话建立失败", "apiKeyID", apiKeyID, "error", err)
-		_ = conn.Close(websocket.StatusInternalError, "session setup failed")
-		cancel()
-		return
-	}
-	defer session.Close()
-
-	if werr := session.Wait(); werr != nil {
-		e.logger.Debug("智能模式 WebSocket 会话结束", "apiKeyID", apiKeyID, "error", werr)
-	}
-}
+func (e *Endpoints) handleSmartWS(c *gin.Context) { e.serveWS(c, ModeSmart) }

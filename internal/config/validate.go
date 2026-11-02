@@ -87,6 +87,9 @@ func ValidateYAMLConfig(cfg YAMLConfig) error {
 	// mcp_api.smart_discovery_limit 范围 1-200（Req 11.4）。
 	rangeCheck(fields, "mcp_api.smart_discovery_limit", cfg.MCPAPI.SmartDiscoveryLimit, 1, 200)
 	rangeCheck(fields, "mcp_api.request_body_limit_mib", cfg.MCPAPI.RequestBodyLimitMiB, MinMCPRequestBodyLimitMiB, MaxMCPRequestBodyLimitMiB)
+	if m := cfg.MCPAPI.DefaultMode; m != "" && m != ModeSmart && m != ModeFull {
+		fields["mcp_api.default_mode"] = fmt.Sprintf("默认接入模式取值非法（应为 %q 或 %q）", ModeSmart, ModeFull)
+	}
 
 	// statistics.top_limit_default 范围 1-100（Req 16.3）。
 	rangeCheck(fields, "statistics.top_limit_default", cfg.Statistics.TopLimitDefault, 1, 100)

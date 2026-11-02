@@ -212,9 +212,12 @@ By default, the gateway listens on `:8080` for the admin console, admin APIs, he
 | `/`, `/assets/*` | none | Embedded admin SPA |
 | `/api/auth/*` | none | Initialization status, admin registration and login |
 | `/api/admin/*` | Admin JWT | Management APIs for upstreams, rules, API Keys, tools, stats, audit, security, settings, backup and templates |
-| `/mcp/sse` | API Key + security + ACL + rate limit | Full-mode SSE MCP endpoint |
-| `/mcp/http` | API Key + security + ACL + rate limit | Full-mode Streamable HTTP MCP endpoint |
-| `/mcp/ws` | API Key + security + ACL + rate limit | Full-mode WebSocket MCP endpoint |
+| `/mcp/sse` | API Key + security + ACL + rate limit | Default SSE MCP endpoint; mode set by "Default access mode" in settings (smart by default) |
+| `/mcp/http` | API Key + security + ACL + rate limit | Default Streamable HTTP MCP endpoint; same mode setting |
+| `/mcp/ws` | API Key + security + ACL + rate limit | Default WebSocket MCP endpoint; same mode setting |
+| `/mcp/full/sse` | API Key + security + ACL + rate limit | Full-mode SSE MCP endpoint |
+| `/mcp/full/http` | API Key + security + ACL + rate limit | Full-mode Streamable HTTP MCP endpoint |
+| `/mcp/full/ws` | API Key + security + ACL + rate limit | Full-mode WebSocket MCP endpoint |
 | `/mcp/smart/sse` | API Key + security + ACL + rate limit | Smart-mode SSE MCP endpoint |
 | `/mcp/smart/http` | API Key + security + ACL + rate limit | Smart-mode Streamable HTTP MCP endpoint |
 | `/mcp/smart/ws` | API Key + security + ACL + rate limit | Smart-mode WebSocket MCP endpoint |
@@ -268,7 +271,7 @@ Startup validates required env vars, reads YAML, generates a missing JWT secret,
 2. Test connectivity and refresh the tool list.
 3. Use Rules to normalize tool names, hide unwanted tools and attach tool policies.
 4. Create API Keys with per-client visible tools, CIDR allowlists and rate limits.
-5. Connect clients to `/mcp/smart/http` or `/mcp/smart/sse` first; use full-mode endpoints when the client can handle the entire catalog.
+5. Connect clients to `/mcp/http` (smart mode by default); clients with their own tool search (Claude Code, OpenCode) can use `/mcp/full/http`.
 6. Monitor Call Records, Statistics, Audit and Security Center for quality and risk.
 
 ## Development

@@ -250,6 +250,7 @@ func (a *App) build(envCfg config.EnvConfig) error {
 	a.mcpService = mcpService
 	mcpEndpoints := mcpapi.NewEndpoints(mcpService, resolveAPIKeyID, a.logger)
 	mcpEndpoints.SetRequestBodyLimitMiB(yamlCfg.MCPAPI.RequestBodyLimitMiB)
+	mcpEndpoints.SetDefaultMode(defaultMCPMode(yamlCfg.MCPAPI.DefaultMode))
 	a.mcpEndpoints = mcpEndpoints
 
 	// --- 健康检查：启动连通性探测器 + 详细健康汇总器（Req 20）---

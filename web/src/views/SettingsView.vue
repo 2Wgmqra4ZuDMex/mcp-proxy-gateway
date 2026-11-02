@@ -1047,6 +1047,27 @@ const errClass = 'mt-1 text-xs text-error-500'
           <div :class="gridClass">
             <div>
               <FieldLabel
+                label="默认接入模式"
+                required
+                tooltip="决定 /mcp/http、/mcp/sse、/mcp/ws 这三个默认地址使用哪种模式。/mcp/smart/* 固定为智能模式，/mcp/full/* 固定为全量模式，不受这里影响。"
+              />
+              <select
+                :value="config.mcp_api.default_mode || 'smart'"
+                :class="inputClass"
+                @change="config.mcp_api.default_mode = ($event.target as HTMLSelectElement).value as 'smart' | 'full'"
+              >
+                <option value="smart">智能模式（按需发现工具）</option>
+                <option value="full">全量模式（一次性提供全部工具）</option>
+              </select>
+              <p :class="hintClass">
+                已接入默认地址的客户端无需改配置，重新连接后即按新模式工作。
+              </p>
+              <p v-if="fieldErrors['mcp_api.default_mode']" :class="errClass">
+                {{ fieldErrors['mcp_api.default_mode'] }}
+              </p>
+            </div>
+            <div>
+              <FieldLabel
                 label="智能模式默认返回工具数"
                 required
                 tooltip="智能模式下，网关工具列表发现接口默认返回的真实工具摘要数量。"

@@ -161,7 +161,7 @@ const endpoints = computed<EndpointItem[]>(() => [
     key: 'sse',
     name: 'SSE',
     badge: '事件流',
-    address: `${HTTP_ORIGIN}/mcp/sse`,
+    address: `${HTTP_ORIGIN}/mcp/full/sse`,
     desc: '适合仍使用 SSE 传输的 MCP 客户端。',
     clientType: 'sse',
     guideDesc: '兼容旧版或仍以事件流建立会话的客户端，适合需要保持服务端推送通道的场景。',
@@ -170,7 +170,7 @@ const endpoints = computed<EndpointItem[]>(() => [
     key: 'http',
     name: 'Streamable HTTP',
     badge: '推荐',
-    address: `${HTTP_ORIGIN}/mcp/http`,
+    address: `${HTTP_ORIGIN}/mcp/full/http`,
     desc: '适合支持新版 HTTP 传输的客户端。',
     clientType: 'streamable-http',
     guideDesc: '当前最推荐的远程 MCP 接入方式，配置简单，适合绝大多数支持新版 MCP 传输的客户端。',
@@ -179,7 +179,7 @@ const endpoints = computed<EndpointItem[]>(() => [
     key: 'ws',
     name: 'WebSocket',
     badge: '长连接',
-    address: `${WS_ORIGIN}/mcp/ws`,
+    address: `${WS_ORIGIN}/mcp/full/ws`,
     desc: '适合需要稳定双向通道的客户端。',
     clientType: 'websocket',
     guideDesc: '适合需要长连接和双向通信的客户端，浏览器直连时建议使用查询参数认证。',
@@ -270,6 +270,9 @@ const selectedToolDetail = computed<ToolDetail | null>(() => {
   }
   return null
 })
+const defaultModeLabel = computed(() =>
+  settings.value?.mcp_api?.default_mode === 'full' ? '全量模式' : '智能模式',
+)
 const activeEndpoints = computed(() => endpointTab.value === 'smart' ? smartEndpoints.value : endpoints.value)
 const guideHTTPOrigin = computed(() => mcpHTTPOrigin(guideOrigin.value))
 const guideWSOrigin = computed(() => mcpWSOrigin(guideOrigin.value))
@@ -315,7 +318,7 @@ const guideEndpoints = computed<EndpointItem[]>(() => {
       key: 'sse',
       name: 'SSE',
       badge: '事件流',
-      address: `${httpOrigin}/mcp/sse`,
+      address: `${httpOrigin}/mcp/full/sse`,
       desc: '适合仍使用 SSE 传输的 MCP 客户端。',
       clientType: 'sse',
       guideDesc: '兼容旧版或仍以事件流建立会话的客户端，适合需要保持服务端推送通道的场景。',
@@ -324,7 +327,7 @@ const guideEndpoints = computed<EndpointItem[]>(() => {
       key: 'http',
       name: 'Streamable HTTP',
       badge: '推荐',
-      address: `${httpOrigin}/mcp/http`,
+      address: `${httpOrigin}/mcp/full/http`,
       desc: '适合支持新版 HTTP 传输的客户端。',
       clientType: 'streamable-http',
       guideDesc: '当前最推荐的远程 MCP 接入方式，配置简单，适合绝大多数支持新版 MCP 传输的客户端。',
@@ -333,7 +336,7 @@ const guideEndpoints = computed<EndpointItem[]>(() => {
       key: 'ws',
       name: 'WebSocket',
       badge: '长连接',
-      address: `${wsOrigin}/mcp/ws`,
+      address: `${wsOrigin}/mcp/full/ws`,
       desc: '适合需要稳定双向通道的客户端。',
       clientType: 'websocket',
       guideDesc: '适合需要长连接和双向通信的客户端，浏览器直连时建议使用查询参数认证。',
@@ -848,6 +851,18 @@ const cardClass =
             <h3 class="text-base font-semibold text-gray-800 dark:text-white/90">对外接口地址</h3>
             <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
               全量模式与智能模式各自拥有独立端点，可同时使用。外部 MCP 客户端使用这些地址连接本系统。
+            </p>
+            <p class="mt-2 text-sm text-gray-600 dark:text-gray-300">
+              默认地址
+              <span class="font-mono text-gray-800 dark:text-white/90">/mcp/http</span>、<span
+                class="font-mono text-gray-800 dark:text-white/90"
+                >/mcp/sse</span
+              >、<span class="font-mono text-gray-800 dark:text-white/90">/mcp/ws</span>
+              当前为
+              <span class="font-medium text-brand-600 dark:text-brand-400">{{
+                defaultModeLabel
+              }}</span
+              >，可在「系统设置 → 对外 API 默认值」修改；下方为两种模式的固定地址。
             </p>
           </div>
           <div class="flex items-center gap-3">

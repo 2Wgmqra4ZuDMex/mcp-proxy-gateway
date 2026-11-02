@@ -151,6 +151,9 @@ type MCPAPIConfig struct {
 	SmartDiscoveryLimit int `yaml:"smart_discovery_limit" json:"smart_discovery_limit"`
 	// RequestBodyLimitMiB 为单次对外 MCP POST 请求体上限，单位 MiB。
 	RequestBodyLimitMiB int `yaml:"request_body_limit_mib" json:"request_body_limit_mib"`
+	// DefaultMode 为 /mcp/sse、/mcp/http、/mcp/ws 的接入模式：smart（默认）或 full。
+	// /mcp/smart/* 与 /mcp/full/* 不受影响。
+	DefaultMode string `yaml:"default_mode" json:"default_mode"`
 }
 
 // StatisticsConfig 为统计服务配置（Req 16）。
@@ -352,6 +355,7 @@ func DefaultYAMLConfig() YAMLConfig {
 		MCPAPI: MCPAPIConfig{
 			SmartDiscoveryLimit: 50,
 			RequestBodyLimitMiB: DefaultMCPRequestBodyLimitMiB,
+			DefaultMode:         ModeSmart,
 		},
 		Statistics: StatisticsConfig{
 			TopLimitDefault: 10,

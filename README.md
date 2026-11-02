@@ -212,9 +212,12 @@ docker pull xylplm/mcp-proxy-gateway:1.0.202606071302-slim
 | `/`、`/assets/*` | 无 | 内嵌管理台 SPA |
 | `/api/auth/*` | 无 | 初始化状态、管理员注册、登录 |
 | `/api/admin/*` | 管理员 JWT | 上游、规则、API Key、工具、统计、审计、安全、设置、备份、模板等管理 API |
-| `/mcp/sse` | API Key + 安全中心 + ACL + 限流 | 全量模式 SSE MCP 入口 |
-| `/mcp/http` | API Key + 安全中心 + ACL + 限流 | 全量模式 Streamable HTTP MCP 入口 |
-| `/mcp/ws` | API Key + 安全中心 + ACL + 限流 | 全量模式 WebSocket MCP 入口 |
+| `/mcp/sse` | API Key + 安全中心 + ACL + 限流 | 默认 SSE MCP 入口，模式由「系统设置 → 默认接入模式」决定（默认智能） |
+| `/mcp/http` | API Key + 安全中心 + ACL + 限流 | 默认 Streamable HTTP MCP 入口，模式同上 |
+| `/mcp/ws` | API Key + 安全中心 + ACL + 限流 | 默认 WebSocket MCP 入口，模式同上 |
+| `/mcp/full/sse` | API Key + 安全中心 + ACL + 限流 | 全量模式 SSE MCP 入口 |
+| `/mcp/full/http` | API Key + 安全中心 + ACL + 限流 | 全量模式 Streamable HTTP MCP 入口 |
+| `/mcp/full/ws` | API Key + 安全中心 + ACL + 限流 | 全量模式 WebSocket MCP 入口 |
 | `/mcp/smart/sse` | API Key + 安全中心 + ACL + 限流 | 智能模式 SSE MCP 入口 |
 | `/mcp/smart/http` | API Key + 安全中心 + ACL + 限流 | 智能模式 Streamable HTTP MCP 入口 |
 | `/mcp/smart/ws` | API Key + 安全中心 + ACL + 限流 | 智能模式 WebSocket MCP 入口 |
@@ -268,7 +271,7 @@ Authorization: Bearer <your-api-key>
 2. 在上游详情中测试连接并刷新工具列表，确认工具目录可见。
 3. 在「规则管理」配置别名、屏蔽和工具策略，把工具名整理成面向客户端的稳定接口。
 4. 创建 API Key，为不同客户端配置独立可见工具、IP/CIDR 白名单与限流。
-5. 客户端优先接入 `/mcp/smart/http` 或 `/mcp/smart/sse`，上下文充足时再使用全量入口。
+5. 客户端默认接入 `/mcp/http`（默认为智能模式）；自带工具搜索的客户端（如 Claude Code、OpenCode）可改用 `/mcp/full/http`。
 6. 通过「调用记录」「统计分析」「审计日志」「安全中心」观察调用质量与访问风险。
 
 ## 开发

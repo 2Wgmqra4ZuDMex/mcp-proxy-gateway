@@ -102,6 +102,8 @@ export interface MCPAPIConfig {
   smart_discovery_limit: number
   /** 单次对外 MCP POST 请求体上限，单位 MiB，默认 8。 */
   request_body_limit_mib: number
+  /** /mcp/sse、/mcp/http、/mcp/ws 的接入模式，默认 smart；/mcp/smart/* 与 /mcp/full/* 固定不变。 */
+  default_mode?: 'smart' | 'full'
 }
 
 /** 统计服务配置（对应后端 StatisticsConfig）。 */

@@ -249,6 +249,7 @@ func (a *App) ApplySettings(cfg config.YAMLConfig) error {
 	}
 	if a.mcpEndpoints != nil {
 		a.mcpEndpoints.SetRequestBodyLimitMiB(cfg.MCPAPI.RequestBodyLimitMiB)
+		a.mcpEndpoints.SetDefaultMode(defaultMCPMode(cfg.MCPAPI.DefaultMode))
 	}
 	if a.agg != nil {
 		a.agg.SetRoutingStrategy(cfg.Aggregation.ToolRoutingStrategy)
