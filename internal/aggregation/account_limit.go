@@ -265,11 +265,39 @@ func (s *Service) candidatesForAttempt(entry ReverseEntry, tried map[string]stru
 	if compatibleAvailable {
 		out.Candidates = available
 	} else {
-		out.Candidates = fresh
+		// 全部在冷却：先试最早恢复的账号（通常是只限流 1 分钟的），Key 无效等长冷却的账号排在后面。
+		out.Candidates = s.earliestRecovering(fresh)
 	}
 	hasCompatible := false
 	for _, c := range out.Candidates {
 		hasCompatible = hasCompatible || c.Compatible
 	}
 	return out, hasCompatible
+}
+
+// earliestRecovering 只保留冷却结束时间最早的兼容来源（同一时刻的并列保留）；
+// 没有兼容来源时原样返回。后续尝试会去掉已试过的来源，再轮到其余账号。
+func (s *Service) earliestRecovering(candidates []ToolCandidate) []ToolCandidate {
+	s.accountLimitMu.Lock()
+	defer s.accountLimitMu.Unlock()
+	var earliest time.Time
+	for _, c := range candidates {
+		if !c.Compatible {
+			continue
+		}
+		until := s.accountLimits[c.UpstreamID].Until
+		if earliest.IsZero() || until.Before(earliest) {
+			earliest = until
+		}
+	}
+	if earliest.IsZero() {
+		return candidates
+	}
+	out := make([]ToolCandidate, 0, len(candidates))
+	for _, c := range candidates {
+		if c.Compatible && !s.accountLimits[c.UpstreamID].Until.After(earliest) {
+			out = append(out, c)
+		}
+	}
+	return out
 }

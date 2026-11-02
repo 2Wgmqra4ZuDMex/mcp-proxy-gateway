@@ -243,3 +243,29 @@ func TestInvokeRecordsAccountEventOnRejection(t *testing.T) {
 		t.Fatal("清除后应结束冷却")
 	}
 }
+
+func TestAllCoolingPrefersEarliestRecovery(t *testing.T) {
+	invoker := &scriptedInvoker{byUp: map[string]domain.ToolResult{
+		"bad-key": textResult(true, "Invalid API key provided"),
+		"limited": textResult(false, tavily429),
+	}}
+	svc := failoverService(invoker, "bad-key", "limited")
+	now := time.Now()
+	svc.now = func() time.Time { return now }
+	// 第一次调用：两个账号都被拒，分别进入 10 分钟与 1 分钟冷却。
+	_, _ = svc.InvokeTool(context.Background(), "", "search", json.RawMessage(`{}`))
+	if len(svc.AccountLimits()) != 2 {
+		t.Fatalf("两个账号都应在冷却：%+v", svc.AccountLimits())
+	}
+	// 限流账号恢复正常后再调用：应先试最早恢复的 limited，而不是 Key 无效的 bad-key。
+	delete(invoker.byUp, "limited")
+	before := len(invoker.called())
+	res, err := svc.InvokeTool(context.Background(), "", "search", json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := invoker.called()[before:]
+	if len(calls) != 1 || calls[0] != "limited" || resultText(res.Content) != "ok from limited" {
+		t.Fatalf("全部冷却时应先试最早恢复的账号：%v", calls)
+	}
+}
