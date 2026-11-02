@@ -594,7 +594,7 @@ const linkBtn = 'text-sm font-medium transition disabled:opacity-50'
               type="text"
               autocomplete="off"
               :class="inputClass"
-              placeholder="socks5://用户名:密码@192.168.1.250:21002"
+              placeholder="socks5://用户名:密码@代理地址:1080"
             />
             <p class="mt-1 text-xs text-gray-400">
               支持 http://、https://、socks5://、socks5h://。网关在 Docker 中运行时，本机代理请用
