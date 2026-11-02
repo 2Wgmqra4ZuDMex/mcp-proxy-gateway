@@ -388,3 +388,44 @@ func TestDefaultEndpointsFollowDefaultMode(t *testing.T) {
 		t.Fatalf("非法值应按全量处理，got=%q", eps.DefaultMode())
 	}
 }
+
+// TestSSEEndpointKeepsQueryAPIKey 验证以 ?api_key= 连接 SSE 时，endpoint 事件下发的消息地址
+// 带上 api_key，客户端后续 POST 才能通过鉴权。
+func TestSSEEndpointKeepsQueryAPIKey(t *testing.T) {
+	srv := epNewTestServer(t, &epFakeAggregation{buildResult: epToolDefs()})
+	for _, path := range []string{PathSSE, PathFullSSE, PathSmartSSE} {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+path+"?api_key=k%2B1", nil)
+		req.Header.Set("Accept", "text/event-stream")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			cancel()
+			t.Fatalf("%s: %v", path, err)
+		}
+		buf := make([]byte, 512)
+		n, _ := resp.Body.Read(buf)
+		first := string(buf[:n])
+		resp.Body.Close()
+		cancel()
+		if !strings.HasPrefix(first, "event: endpoint\ndata: "+path+"?sessionid=") || !strings.Contains(first, "&api_key=k%2B1\n") {
+			t.Fatalf("%s: endpoint 事件应带 api_key，got=%q", path, first)
+		}
+	}
+}
+
+// TestWebSocketAcceptsMCPSubprotocol 验证请求 mcp 子协议的客户端（如官方 TypeScript SDK）能完成握手。
+func TestWebSocketAcceptsMCPSubprotocol(t *testing.T) {
+	srv := epNewTestServer(t, &epFakeAggregation{buildResult: epToolDefs()})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	for _, path := range []string{PathWS, PathFullWS, PathSmartWS} {
+		conn, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(srv.URL, "http")+path+"?api_key=k", &websocket.DialOptions{Subprotocols: []string{"mcp"}})
+		if err != nil {
+			t.Fatalf("%s: 握手失败：%v", path, err)
+		}
+		if conn.Subprotocol() != "mcp" {
+			t.Fatalf("%s: 应协商 mcp 子协议，got=%q", path, conn.Subprotocol())
+		}
+		conn.Close(websocket.StatusNormalClosure, "")
+	}
+}

@@ -198,7 +198,7 @@ func (e *Endpoints) handleFullSSE(c *gin.Context) {
 	if !e.limitRequestBody(c) {
 		return
 	}
-	e.sseHandler.ServeHTTP(c.Writer, e.withAPIKey(c, ModeFull))
+	e.sseHandler.ServeHTTP(sseWriter(c), e.withAPIKey(c, ModeFull))
 }
 
 func (e *Endpoints) handleFullHTTP(c *gin.Context) {
@@ -251,7 +251,7 @@ func (e *Endpoints) handleSSE(c *gin.Context) {
 	if !e.limitRequestBody(c) {
 		return
 	}
-	e.sseHandler.ServeHTTP(c.Writer, e.withAPIKey(c, e.DefaultMode()))
+	e.sseHandler.ServeHTTP(sseWriter(c), e.withAPIKey(c, e.DefaultMode()))
 }
 
 // handleHTTP 以 Streamable-HTTP 传输对外暴露聚合能力（Req 11.8）。委派给 SDK 的
@@ -340,7 +340,9 @@ func (e *Endpoints) serveWS(c *gin.Context, mode string) {
 		return
 	}
 
-	conn, err := websocket.Accept(c.Writer, c.Request, nil)
+	// 声明支持 mcp 子协议：官方 TypeScript SDK 等客户端会请求该子协议，服务端不回应时
+	// 客户端会直接断开；不请求子协议的客户端不受影响。
+	conn, err := websocket.Accept(c.Writer, c.Request, &websocket.AcceptOptions{Subprotocols: []string{"mcp"}})
 	if err != nil {
 		// Accept 失败时其内部已写出 HTTP 错误响应；此处仅记录。
 		e.logger.Warn("WebSocket 升级失败", "apiKeyID", apiKeyID, "error", err)
@@ -440,7 +442,7 @@ func (e *Endpoints) handleSmartSSE(c *gin.Context) {
 	if !e.limitRequestBody(c) {
 		return
 	}
-	e.sseHandler.ServeHTTP(c.Writer, e.withAPIKey(c, ModeSmart))
+	e.sseHandler.ServeHTTP(sseWriter(c), e.withAPIKey(c, ModeSmart))
 }
 
 func (e *Endpoints) handleSmartHTTP(c *gin.Context) {
