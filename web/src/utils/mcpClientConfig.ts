@@ -6,8 +6,8 @@ export interface MCPClientPreset {
   label: string
   badge: string
   desc: string
-  /** default 为 /mcp/* 默认地址（跟随系统设置），full 为固定全量模式地址。 */
-  mode: 'default' | 'full'
+  /** default 为 /mcp/* 默认地址（跟随系统设置），smart / full 为固定模式地址。 */
+  mode: 'default' | 'full' | 'smart'
   endpoint: 'sse' | 'http' | 'ws'
   auth: 'header' | 'bearer' | 'query'
   configKind: MCPClientConfigKind
