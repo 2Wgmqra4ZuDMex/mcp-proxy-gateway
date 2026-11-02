@@ -25,6 +25,8 @@ type accountEventModel struct {
 	Message      string    `gorm:"column:message;type:text;not null;default:''"`
 	Tool         string    `gorm:"column:tool;type:varchar(200);not null;default:''"`
 	Source       string    `gorm:"column:source;type:varchar(16);not null;default:'call'"`
+	CooldownS    int       `gorm:"column:cooldown_s;type:integer;not null;default:0"`
+	Level        int       `gorm:"column:level;type:integer;not null;default:0"`
 	OccurredAt   time.Time `gorm:"column:occurred_at;type:timestamptz;not null;index:idx_account_event_upstream_time,priority:2;index:idx_account_event_time"`
 }
 
@@ -43,7 +45,7 @@ func (r *AccountEventRepo) Insert(ctx context.Context, ev domain.AccountEvent) e
 		ev.OccurredAt = time.Now().UTC()
 	}
 	m := accountEventModel{UpstreamID: ev.UpstreamID, UpstreamName: ev.UpstreamName, Kind: ev.Kind, HTTPStatus: ev.HTTPStatus,
-		Message: ev.Message, Tool: ev.Tool, Source: ev.Source, OccurredAt: ev.OccurredAt.UTC()}
+		Message: ev.Message, Tool: ev.Tool, Source: ev.Source, OccurredAt: ev.OccurredAt.UTC(), CooldownS: ev.CooldownS, Level: ev.Level}
 	if err := r.db.WithContext(ctx).Create(&m).Error; err != nil {
 		return err
 	}
@@ -62,7 +64,8 @@ func (r *AccountEventRepo) ListSince(ctx context.Context, since time.Time, limit
 	out := make([]domain.AccountEvent, 0, len(models))
 	for _, m := range models {
 		out = append(out, domain.AccountEvent{ID: m.ID, UpstreamID: m.UpstreamID, UpstreamName: m.UpstreamName, Kind: m.Kind,
-			HTTPStatus: m.HTTPStatus, Message: m.Message, Tool: m.Tool, Source: m.Source, OccurredAt: m.OccurredAt})
+			HTTPStatus: m.HTTPStatus, Message: m.Message, Tool: m.Tool, Source: m.Source, OccurredAt: m.OccurredAt,
+			CooldownS: m.CooldownS, Level: m.Level})
 	}
 	return out, nil
 }

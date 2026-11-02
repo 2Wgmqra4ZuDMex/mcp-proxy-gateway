@@ -269,3 +269,71 @@ func TestAllCoolingPrefersEarliestRecovery(t *testing.T) {
 		t.Fatalf("全部冷却时应先试最早恢复的账号：%v", calls)
 	}
 }
+
+func TestAccountBackoffEscalatesAndResets(t *testing.T) {
+	svc := &Service{}
+	now := time.Now()
+	svc.now = func() time.Time { return now }
+	rate := AccountRejection{Kind: RejectionRateLimited, Message: "429 Too Many Requests"}
+	want := []time.Duration{time.Minute, 5 * time.Minute, 30 * time.Minute, 2 * time.Hour, 6 * time.Hour, 24 * time.Hour, 24 * time.Hour}
+	for i, w := range want {
+		got := svc.markAccountLimited("a", rate)
+		if got.Cooldown != w || got.Level != i+1 {
+			t.Fatalf("第 %d 次限流应暂停 %v（级别 %d），got %v / %d", i+1, w, i+1, got.Cooldown, got.Level)
+		}
+		if !svc.accountLimited("a") {
+			t.Fatal("暂停期间应跳过该账号")
+		}
+		now = now.Add(got.Cooldown + time.Second) // 暂停结束后立刻又被限流
+		if svc.accountLimited("a") {
+			t.Fatal("暂停结束后应恢复参与轮询")
+		}
+	}
+
+	// 成功一次后回到第一级。
+	svc.markAccountHealthy("a")
+	if got := svc.markAccountLimited("a", rate); got.Cooldown != time.Minute || got.Level != 1 {
+		t.Fatalf("成功后应回到第一级：%+v", got)
+	}
+	// 暂停结束后闲置超过 24 小时也回到第一级。
+	now = now.Add(time.Minute + backoffResetIdle + time.Second)
+	if got := svc.markAccountLimited("a", rate); got.Level != 1 {
+		t.Fatalf("长期未再被拒应回到第一级：%+v", got)
+	}
+
+	// 额度不足从 10 分钟起。
+	quota := AccountRejection{Kind: RejectionQuotaExhausted, Message: "insufficient credits"}
+	if got := svc.markAccountLimited("b", quota); got.Cooldown != 10*time.Minute {
+		t.Fatalf("额度不足第一次应暂停 10 分钟：%+v", got)
+	}
+	now = now.Add(11 * time.Minute)
+	if got := svc.markAccountLimited("b", quota); got.Cooldown != time.Hour || got.Level != 2 {
+		t.Fatalf("额度不足第二次应暂停 1 小时：%+v", got)
+	}
+
+	// 上游给出 Retry-After 时按它暂停。
+	withRetry := AccountRejection{Kind: RejectionRateLimited, Message: `{"error":"rate limited","retry_after": 90}`}
+	if got := svc.markAccountLimited("c", withRetry); got.Cooldown != 90*time.Second {
+		t.Fatalf("应按 Retry-After 暂停 90 秒：%+v", got)
+	}
+}
+
+func TestSuccessResetsBackoffDuringInvoke(t *testing.T) {
+	invoker := &scriptedInvoker{byUp: map[string]domain.ToolResult{"a": textResult(false, tavily429)}}
+	svc := failoverService(invoker, "a")
+	now := time.Now()
+	svc.now = func() time.Time { return now }
+	_, _ = svc.InvokeTool(context.Background(), "", "search", json.RawMessage(`{}`))
+	now = now.Add(2 * time.Minute)
+	delete(invoker.byUp, "a")
+	if _, err := svc.InvokeTool(context.Background(), "", "search", json.RawMessage(`{}`)); err != nil {
+		t.Fatal(err)
+	}
+	invoker.byUp["a"] = textResult(false, tavily429)
+	now = now.Add(time.Second)
+	_, _ = svc.InvokeTool(context.Background(), "", "search", json.RawMessage(`{}`))
+	views := svc.AccountLimits()
+	if len(views) != 1 || views[0].Level != 1 {
+		t.Fatalf("成功调用后再次被限流应从第一级开始：%+v", views)
+	}
+}

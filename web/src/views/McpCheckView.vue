@@ -92,6 +92,12 @@ function toggleAccount(id: string): void {
   expandedAccounts.value = next
 }
 
+function durationText(seconds: number): string {
+  if (seconds >= 3600) return `${Math.round(seconds / 360) / 10} 小时`
+  if (seconds >= 60) return `${Math.round(seconds / 60)} 分钟`
+  return `${seconds} 秒`
+}
+
 function remaining(until: string): string {
   const s = Math.max(0, Math.round((new Date(until).getTime() - nowTick.value) / 1000))
   return s >= 60 ? `约 ${Math.ceil(s / 60)} 分钟` : `${s} 秒`
@@ -447,7 +453,9 @@ const inputClass =
           <h3 class="text-base font-semibold text-gray-800 dark:text-white/90">账号异常</h3>
           <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
             调用或检测时被上游拒绝（限流、额度不足、Key 无效或无权限）的账号会记录在这里，保留 30
-            天。被拒的账号会暂停参与轮询一段时间：限流 1 分钟，其余 10 分钟。
+            天。被拒的账号暂停参与轮询，连续被拒时逐级延长：限流 1 分钟 → 5 分钟 → 30 分钟 → 2 小时
+            → 6 小时 → 24 小时；额度不足或 Key 无效 10 分钟 → 1 小时 → 6 小时 → 24
+            小时。成功调用一次就回到第一级。
           </p>
         </div>
         <div class="flex shrink-0 gap-2">
@@ -508,7 +516,10 @@ const inputClass =
                   <span
                     v-if="acc.cooling"
                     class="bg-warning-50 text-warning-700 dark:bg-warning-500/15 dark:text-warning-400 rounded-full px-2 py-0.5 text-[11px]"
-                    >暂停中 · {{ remaining(acc.cooling.until) }}后恢复</span
+                    >暂停中 · {{ remaining(acc.cooling.until) }}后恢复<template
+                      v-if="acc.cooling.level > 1"
+                      >（连续第 {{ acc.cooling.level }} 次）</template
+                    ></span
                   >
                   <span v-else class="text-xs text-gray-400">已恢复轮询</span>
                 </span>
@@ -547,7 +558,13 @@ const inputClass =
               >
               <span class="ml-2 text-gray-500"
                 >{{ ev.source === 'check' ? 'MCP 检测' : '调用'
-                }}<template v-if="ev.tool"> · {{ ev.tool }}</template></span
+                }}<template v-if="ev.tool"> · {{ ev.tool }}</template
+                ><template v-if="ev.cooldownS">
+                  · 暂停 {{ durationText(ev.cooldownS)
+                  }}<template v-if="(ev.level ?? 0) > 1"
+                    >（连续第 {{ ev.level }} 次）</template
+                  ></template
+                ></span
               >
               <span class="mt-1 block break-all text-gray-400">{{ ev.message }}</span>
             </li>

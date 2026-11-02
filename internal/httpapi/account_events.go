@@ -16,6 +16,8 @@ type AccountCooldown struct {
 	Kind       string    `json:"kind"`
 	Message    string    `json:"message"`
 	Until      time.Time `json:"until"`
+	// Level 为连续被拒次数：暂停时间随之逐级延长。
+	Level int `json:"level"`
 }
 
 // AccountEventSummary 为单个账号近期的异常统计。

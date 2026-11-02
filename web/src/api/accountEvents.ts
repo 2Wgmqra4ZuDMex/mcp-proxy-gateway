@@ -12,6 +12,9 @@ export interface AccountEvent {
   tool?: string
   source: 'call' | 'check'
   occurredAt: string
+  /** 本次被拒后暂停的秒数与连续被拒次数（MCP 检测不暂停账号）。 */
+  cooldownS?: number
+  level?: number
 }
 
 export interface AccountCooldown {
@@ -19,6 +22,8 @@ export interface AccountCooldown {
   kind: AccountEventKind
   message: string
   until: string
+  /** 连续被拒次数，暂停时间随之逐级延长。 */
+  level: number
 }
 
 export interface AccountEventSummary {

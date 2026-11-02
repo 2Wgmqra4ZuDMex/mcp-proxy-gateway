@@ -766,6 +766,9 @@ func (s *Service) InvokeTool(ctx context.Context, apiKeyID, exposedName string, 
 		s.recordCallAttempt(ctx, apiKeyID, exposedName, candidate, startedAt, args, result, callErr, rejectionPtr)
 
 		if !rejected {
+			if callErr == nil {
+				s.markAccountHealthy(candidate.UpstreamID)
+			}
 			if callErr != nil {
 				log.Warn("工具调用上游失败", "exposedName", exposedName, "upstreamID", candidate.UpstreamID, "latencyMS", int(time.Since(startedAt).Milliseconds()), "error", callErr)
 			} else {
@@ -776,11 +779,11 @@ func (s *Service) InvokeTool(ctx context.Context, apiKeyID, exposedName string, 
 			}
 			return result, callErr
 		}
-		s.markAccountLimited(candidate.UpstreamID, rejection)
+		rejection = s.markAccountLimited(candidate.UpstreamID, rejection)
 		s.recordAccountEvent(ctx, candidate, rejection)
 		tried[sourceFailureKey(candidate)] = struct{}{}
 		log.Warn("上游账号拒绝调用，切换下一个账号", "exposedName", exposedName, "upstreamID", candidate.UpstreamID,
-			"upstreamName", candidate.UpstreamName, "kind", rejection.Kind, "status", rejection.Status, "cooldown", rejection.Cooldown.String())
+			"upstreamName", candidate.UpstreamName, "kind", rejection.Kind, "status", rejection.Status, "cooldown", rejection.Cooldown.String(), "level", rejection.Level)
 	}
 	if callErr != nil {
 		log.Warn("工具调用上游失败（所有可用账号均已尝试）", "exposedName", exposedName, "upstreamID", candidate.UpstreamID, "error", callErr)

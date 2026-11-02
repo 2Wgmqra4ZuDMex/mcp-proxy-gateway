@@ -29,6 +29,8 @@ const (
 
 // AccountRejection 描述一次被上游账号拒绝的调用。
 type AccountRejection struct {
+	// Level 为连续被拒的次数（由 markAccountLimited 填写）。
+	Level    int
 	Kind     string
 	Status   int
 	Message  string
@@ -169,7 +171,8 @@ func (s *Service) recordAccountEvent(ctx context.Context, c ToolCandidate, r Acc
 		return
 	}
 	ev := domain.AccountEvent{UpstreamID: c.UpstreamID, UpstreamName: c.UpstreamName, Kind: r.Kind, HTTPStatus: r.Status,
-		Message: r.Message, Tool: c.OriginalName, Source: "call", OccurredAt: s.currentTime().UTC()}
+		Message: r.Message, Tool: c.OriginalName, Source: "call", OccurredAt: s.currentTime().UTC(),
+		CooldownS: int(r.Cooldown / time.Second), Level: r.Level}
 	recorder := s.accountEvents
 	base := context.WithoutCancel(ctx)
 	go func() {
@@ -181,21 +184,73 @@ func (s *Service) recordAccountEvent(ctx context.Context, c ToolCandidate, r Acc
 	}()
 }
 
+// 连续被拒时逐级延长的暂停时间：限流从 1 分钟起，额度不足 / Key 无效从 10 分钟起，最长 24 小时。
+// 账号成功调用一次即回到第一级；暂停结束后超过 24 小时没有再被拒也回到第一级。
+var (
+	rateLimitBackoff = []time.Duration{time.Minute, 5 * time.Minute, 30 * time.Minute, 2 * time.Hour, 6 * time.Hour, 24 * time.Hour}
+	longBackoff      = []time.Duration{10 * time.Minute, time.Hour, 6 * time.Hour, 24 * time.Hour}
+	backoffResetIdle = 24 * time.Hour
+	maxRetryAfter    = 24 * time.Hour
+	retryAfterInText = regexp.MustCompile(`(?i)retry[-_ ]?after["'\s:=]*(\d{1,6})`)
+)
+
+func backoffSteps(kind string) []time.Duration {
+	if kind == RejectionRateLimited {
+		return rateLimitBackoff
+	}
+	return longBackoff
+}
+
+// retryAfterFromMessage 从报错文本中读取"多少秒后重试"（Retry-After / retry_after）。
+func retryAfterFromMessage(msg string) time.Duration {
+	m := retryAfterInText.FindStringSubmatch(msg)
+	if m == nil {
+		return 0
+	}
+	n := atoiStatus(m[1])
+	if n <= 0 {
+		return 0
+	}
+	return min(time.Duration(n)*time.Second, maxRetryAfter)
+}
+
 type accountLimitState struct {
 	Until   time.Time
 	Kind    string
 	Message string
+	// Level 为连续被拒的次数（从 1 开始），决定暂停时长。
+	Level int
 }
 
-// markAccountLimited 让被拒的账号在冷却期内优先被跳过。按上游（账号）记录，
-// 因为限流与额度通常作用于整个账号的所有工具。
-func (s *Service) markAccountLimited(upstreamID string, r AccountRejection) {
+// markAccountLimited 让被拒的账号暂停参与轮询。按上游（账号）记录，因为限流与额度通常作用于
+// 整个账号的所有工具。连续被拒时暂停时间逐级延长；上游给出 Retry-After 时按它暂停。
+// 返回填好实际暂停时长与级别的 rejection。
+func (s *Service) markAccountLimited(upstreamID string, r AccountRejection) AccountRejection {
 	s.accountLimitMu.Lock()
 	defer s.accountLimitMu.Unlock()
 	if s.accountLimits == nil {
 		s.accountLimits = make(map[string]accountLimitState)
 	}
-	s.accountLimits[upstreamID] = accountLimitState{Until: s.currentTime().Add(r.Cooldown), Kind: r.Kind, Message: r.Message}
+	now := s.currentTime()
+	level := 1
+	if prev, ok := s.accountLimits[upstreamID]; ok && now.Sub(prev.Until) < backoffResetIdle {
+		level = prev.Level + 1
+	}
+	steps := backoffSteps(r.Kind)
+	cooldown := steps[min(level, len(steps))-1]
+	if retry := retryAfterFromMessage(r.Message); retry > 0 {
+		cooldown = retry
+	}
+	r.Cooldown, r.Level = cooldown, level
+	s.accountLimits[upstreamID] = accountLimitState{Until: now.Add(cooldown), Kind: r.Kind, Message: r.Message, Level: level}
+	return r
+}
+
+// markAccountHealthy 在账号成功调用后清除暂停记录，下次被拒从第一级开始。
+func (s *Service) markAccountHealthy(upstreamID string) {
+	s.accountLimitMu.Lock()
+	defer s.accountLimitMu.Unlock()
+	delete(s.accountLimits, upstreamID)
 }
 
 func (s *Service) accountLimited(upstreamID string) bool {
@@ -205,11 +260,12 @@ func (s *Service) accountLimited(upstreamID string) bool {
 	if !ok {
 		return false
 	}
-	if !state.Until.After(s.currentTime()) {
+	// 暂停结束后保留记录以便继续升级；长期没有再被拒时清理。
+	if s.currentTime().Sub(state.Until) >= backoffResetIdle {
 		delete(s.accountLimits, upstreamID)
 		return false
 	}
-	return true
+	return state.Until.After(s.currentTime())
 }
 
 // ClearAccountLimit 立即结束账号冷却；upstreamID 为空时结束全部。
@@ -229,6 +285,7 @@ type AccountLimitView struct {
 	Kind       string    `json:"kind"`
 	Message    string    `json:"message"`
 	Until      time.Time `json:"until"`
+	Level      int       `json:"level"`
 }
 
 // AccountLimits 返回仍在冷却中的账号。
@@ -239,7 +296,7 @@ func (s *Service) AccountLimits() []AccountLimitView {
 	out := make([]AccountLimitView, 0, len(s.accountLimits))
 	for id, state := range s.accountLimits {
 		if state.Until.After(now) {
-			out = append(out, AccountLimitView{UpstreamID: id, Kind: state.Kind, Message: state.Message, Until: state.Until})
+			out = append(out, AccountLimitView{UpstreamID: id, Kind: state.Kind, Message: state.Message, Until: state.Until, Level: state.Level})
 		}
 	}
 	return out

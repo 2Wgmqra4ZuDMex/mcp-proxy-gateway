@@ -47,7 +47,7 @@ func (v accountEventView) Status(ctx context.Context) (httpapi.AccountEventStatu
 	sort.Slice(status.Accounts, func(i, j int) bool { return status.Accounts[i].LastAt.After(status.Accounts[j].LastAt) })
 	if v.agg != nil {
 		for _, l := range v.agg.AccountLimits() {
-			status.Cooldowns = append(status.Cooldowns, httpapi.AccountCooldown{UpstreamID: l.UpstreamID, Kind: l.Kind, Message: l.Message, Until: l.Until})
+			status.Cooldowns = append(status.Cooldowns, httpapi.AccountCooldown{UpstreamID: l.UpstreamID, Kind: l.Kind, Message: l.Message, Until: l.Until, Level: l.Level})
 		}
 		sort.Slice(status.Cooldowns, func(i, j int) bool { return status.Cooldowns[i].Until.Before(status.Cooldowns[j].Until) })
 	}

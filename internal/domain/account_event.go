@@ -21,4 +21,7 @@ type AccountEvent struct {
 	Tool         string    `json:"tool,omitempty"`
 	Source       string    `json:"source"`
 	OccurredAt   time.Time `json:"occurredAt"`
+	// CooldownS / Level 为本次被拒后账号暂停的秒数与连续被拒次数（MCP 检测不暂停账号，为 0）。
+	CooldownS int `json:"cooldownS,omitempty"`
+	Level     int `json:"level,omitempty"`
 }
