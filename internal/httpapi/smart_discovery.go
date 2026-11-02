@@ -19,6 +19,7 @@ type SmartDiscoveryService interface {
 	Config(ctx context.Context) discovery.ConfigView
 	SaveConfig(ctx context.Context, in discovery.ConfigInput) (discovery.ConfigView, error)
 	TestConnection(ctx context.Context, in discovery.ConfigInput) (discovery.TestResult, error)
+	ListModels(ctx context.Context, in discovery.ConfigInput) ([]string, error)
 	StartEnrich(force bool) error
 	Status(ctx context.Context) discovery.Status
 	EnrichedTools(ctx context.Context) ([]discovery.EnrichedTool, map[string]string, error)
@@ -39,11 +40,12 @@ type smartDiscoveryPreviewRequest struct {
 }
 
 type smartDiscoveryPreviewResponse struct {
-	Keyword   mcpapi.SearchPage  `json:"keyword"`
-	AI        *mcpapi.SearchPage `json:"ai,omitempty"`
-	AIEnabled bool               `json:"aiEnabled"`
-	AIError   string             `json:"aiError,omitempty"`
-	AILatency int64              `json:"aiLatencyMs,omitempty"`
+	Keyword   mcpapi.SearchPage       `json:"keyword"`
+	AI        *mcpapi.SearchPage      `json:"ai,omitempty"`
+	AIEnabled bool                    `json:"aiEnabled"`
+	AIError   string                  `json:"aiError,omitempty"`
+	AILatency int64                   `json:"aiLatencyMs,omitempty"`
+	AIInfo    *discovery.RerankResult `json:"aiInfo,omitempty"`
 }
 
 func (r *Router) registerSmartDiscoveryRoutes(g *gin.RouterGroup) {
@@ -51,6 +53,7 @@ func (r *Router) registerSmartDiscoveryRoutes(g *gin.RouterGroup) {
 	d.GET("", r.getSmartDiscovery)
 	d.PUT("", r.saveSmartDiscovery)
 	d.POST("/test", r.testSmartDiscovery)
+	d.POST("/models", r.listSmartDiscoveryModels)
 	d.POST("/enrich", r.startSmartDiscoveryEnrich)
 	d.GET("/tools", r.listSmartDiscoveryTools)
 	d.POST("/preview", r.previewSmartDiscovery)
@@ -103,6 +106,22 @@ func (r *Router) testSmartDiscovery(c *gin.Context) {
 		return
 	}
 	respondOK(c, result)
+}
+
+func (r *Router) listSmartDiscoveryModels(c *gin.Context) {
+	if !r.requireSmartDiscovery(c) {
+		return
+	}
+	var in discovery.ConfigInput
+	if !bindJSON(c, &in) {
+		return
+	}
+	models, err := r.smartDiscovery.ListModels(c.Request.Context(), in)
+	if err != nil {
+		respondError(c, err)
+		return
+	}
+	respondOK(c, gin.H{"models": models})
 }
 
 func (r *Router) startSmartDiscoveryEnrich(c *gin.Context) {
@@ -158,6 +177,9 @@ func (r *Router) previewSmartDiscovery(c *gin.Context) {
 		return
 	}
 	resp := smartDiscoveryPreviewResponse{Keyword: keyword, AI: ai, AIEnabled: aiEnabled}
+	if ai != nil {
+		resp.AIInfo = ai.AI
+	}
 	if aiEnabled {
 		resp.AILatency = time.Now().Sub(started).Milliseconds()
 	}

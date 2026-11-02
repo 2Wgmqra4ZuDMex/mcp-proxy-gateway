@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -172,7 +173,7 @@ func TestProperty11SmartDiscoveryAndGet(t *testing.T) {
 			t.Fatalf("重复搜索结果不稳定：first=%+v second=%+v err=%v", got, again, againErr)
 		}
 		for i := range got.Tools {
-			if got.Tools[i] != again.Tools[i] {
+			if !reflect.DeepEqual(got.Tools[i], again.Tools[i]) {
 				t.Fatalf("第 %d 条重复搜索结果不稳定：first=%+v second=%+v", i, got.Tools[i], again.Tools[i])
 			}
 		}

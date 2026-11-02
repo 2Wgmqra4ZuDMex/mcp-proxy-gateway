@@ -88,22 +88,39 @@ type fakeLLM struct {
 	rerank   []string
 	authSeen atomic.Value
 	failNext atomic.Bool
+	// failModel 指定一个总是返回 503 的模型，用于测试备用模型。
+	failModel string
+	models    []string
 }
 
 func (f *fakeLLM) handler(w http.ResponseWriter, r *http.Request) {
 	f.hits.Add(1)
 	f.authSeen.Store(r.Header.Get("Authorization"))
+	if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/models") {
+		data := []map[string]string{}
+		for _, m := range f.models {
+			data = append(data, map[string]string{"id": m})
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"object": "list", "data": data})
+		return
+	}
 	if f.failNext.Swap(false) {
 		w.WriteHeader(http.StatusUnauthorized)
 		_, _ = w.Write([]byte(`{"error":{"message":"invalid api key"}}`))
 		return
 	}
 	var req struct {
+		Model    string `json:"model"`
 		Messages []struct {
 			Content string `json:"content"`
 		} `json:"messages"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&req)
+	if f.failModel != "" && req.Model == f.failModel {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{"error":{"message":"model overloaded"}}`))
+		return
+	}
 	system, user := req.Messages[0].Content, req.Messages[1].Content
 	var reply string
 	switch {
@@ -219,13 +236,16 @@ func TestEnrichGeneratesOncePerFingerprintAndFeedsKeywords(t *testing.T) {
 	if invalidated.Load() == 0 {
 		t.Fatal("生成后应触发索引重建")
 	}
-	if got := svc.ToolKeywords("tavily_search", "Search the web"); got != "" {
+	if got, _ := svc.ToolKeywords("tavily_search", "Search the web"); got != "" {
 		t.Fatalf("未开启工具说明增强时不应注入索引：%q", got)
 	}
 	if _, err := svc.SaveConfig(ctx, ConfigInput{BaseURL: srv.URL, Model: "m", EnrichEnabled: true}); err != nil {
 		t.Fatal(err)
 	}
-	got := svc.ToolKeywords("tavily_search", "Search the web")
+	got, phrases := svc.ToolKeywords("tavily_search", "Search the web")
+	if len(phrases) != 3 {
+		t.Fatalf("关键词列表应去重后返回：%v", phrases)
+	}
 	if !strings.Contains(got, "网页抓取") || strings.Count(got, "网页抓取") != 1 || !strings.Contains(got, "需要读取网页时") {
 		t.Fatalf("增强文本应含去重后的关键词与适用场景：%q", got)
 	}
@@ -337,5 +357,53 @@ func TestServiceNameAndJSONExtraction(t *testing.T) {
 	}
 	if got := schemaParams(json.RawMessage(`{"properties":{"b":{},"a":{}},"required":["b"]}`)); strings.Join(got, ",") != "a,b*" {
 		t.Fatalf("参数提取不符：%v", got)
+	}
+}
+
+func TestRerankFallsBackToBackupModel(t *testing.T) {
+	llm := &fakeLLM{rerank: []string{"tavily_search"}, failModel: "primary"}
+	svc, srv := newTestService(t, llm, nil)
+	ctx := context.Background()
+	view, err := svc.SaveConfig(ctx, ConfigInput{BaseURL: srv.URL, Model: "enrich-model", RerankEnabled: true,
+		RerankModel: "primary", FallbackModels: []string{" backup ", "primary", "", "backup", "enrich-model"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(view.FallbackModels, ",") != "backup,enrich-model" {
+		t.Fatalf("备用模型应去空、去重并排除挑选模型本身：%v", view.FallbackModels)
+	}
+	res, err := svc.Rerank(ctx, "搜网页", []Candidate{{Name: "tavily_search"}}, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Model != "backup" || !res.FallbackUsed || len(res.Failures) != 1 || !strings.Contains(res.Failures[0], "primary") {
+		t.Fatalf("主模型失败时应改用备用模型并记录失败原因：%+v", res)
+	}
+	llm.failModel = "*"
+	if _, err := svc.Rerank(ctx, "另一个查询", []Candidate{{Name: "tavily_search"}}, 3); err != nil {
+		t.Fatalf("备用模型可用时不应报错：%v", err)
+	}
+}
+
+func TestRerankFailsWhenAllModelsFail(t *testing.T) {
+	llm := &fakeLLM{failModel: "only"}
+	svc, srv := newTestService(t, llm, nil)
+	if _, err := svc.SaveConfig(context.Background(), ConfigInput{BaseURL: srv.URL, Model: "only", RerankEnabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Rerank(context.Background(), "q", []Candidate{{Name: "a"}}, 3); err == nil || !strings.Contains(err.Error(), "model overloaded") {
+		t.Fatalf("所有模型失败时应返回汇总错误：%v", err)
+	}
+}
+
+func TestListModels(t *testing.T) {
+	llm := &fakeLLM{models: []string{"zeta", "alpha", "alpha"}}
+	svc, srv := newTestService(t, llm, nil)
+	models, err := svc.ListModels(context.Background(), ConfigInput{BaseURL: srv.URL + "/v1", APIKey: "sk-x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(models, ",") != "alpha,zeta" || llm.authSeen.Load() != "Bearer sk-x" {
+		t.Fatalf("模型列表应去重排序并带上 Key：%v", models)
 	}
 }

@@ -111,11 +111,14 @@ type Provider struct {
 	MaxConcurrency int      `json:"maxConcurrency"`
 	AutoAssess     bool     `json:"autoAssess"`
 	// 以下为智能发现（工具说明增强 / AI 挑选工具）复用本 Provider 时的配置；omitempty 保持旧备份格式不变。
-	ProxyID       string    `json:"proxyId,omitempty"`
-	EnrichEnabled bool      `json:"enrichEnabled,omitempty"`
-	RerankEnabled bool      `json:"rerankEnabled,omitempty"`
-	CreatedAt     time.Time `json:"createdAt"`
-	UpdatedAt     time.Time `json:"updatedAt"`
+	ProxyID       string `json:"proxyId,omitempty"`
+	EnrichEnabled bool   `json:"enrichEnabled,omitempty"`
+	RerankEnabled bool   `json:"rerankEnabled,omitempty"`
+	// RerankModel 为 AI 挑选工具使用的模型，空表示使用 Model；FallbackModels 为其失败时依次尝试的备用模型。
+	RerankModel    string    `json:"rerankModel,omitempty"`
+	FallbackModels []string  `json:"fallbackModels,omitempty"`
+	CreatedAt      time.Time `json:"createdAt"`
+	UpdatedAt      time.Time `json:"updatedAt"`
 }
 
 // ProviderTestResult is the observable result of one real request to an AI

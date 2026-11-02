@@ -1,0 +1,8 @@
+dict/zh_common.txt 由 gse 简体中文词典 data/dict/zh/s_1.txt 精简而来
+（保留词频最高的 8 万个 2～6 字纯汉字词）。
+
+gse — Go efficient multilingual NLP and text segmentation
+https://github.com/go-ego/gse
+Copyright 2016 The go-ego Project Developers.
+Licensed under the Apache License, Version 2.0:
+http://www.apache.org/licenses/LICENSE-2.0

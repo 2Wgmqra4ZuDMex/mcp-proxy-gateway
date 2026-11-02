@@ -24,7 +24,9 @@ const (
 	defaultBatchSize     = 8
 	defaultConcurrency   = 2
 	defaultTimeoutS      = 60
-	maxRerankTimeout     = 20 * time.Second
+	maxRerankTimeout     = 15 * time.Second
+	maxRerankTotal       = 30 * time.Second
+	maxFallbackModels    = 5
 	rerankCacheTTL       = 10 * time.Minute
 	rerankCacheMax       = 256
 	defaultRerankLimit   = 5
@@ -66,18 +68,23 @@ type ConfigView struct {
 	TimeoutS      int    `json:"timeoutS"`
 	EnrichEnabled bool   `json:"enrichEnabled"`
 	RerankEnabled bool   `json:"rerankEnabled"`
+	// RerankModel 为 AI 挑选工具使用的模型（空表示同 Model）；FallbackModels 为备用模型。
+	RerankModel    string   `json:"rerankModel"`
+	FallbackModels []string `json:"fallbackModels"`
 }
 
 // ConfigInput 为保存配置的输入；APIKey 为空表示保留已保存的 Key。
 type ConfigInput struct {
-	BaseURL       string `json:"baseUrl"`
-	APIStyle      string `json:"apiStyle"`
-	Model         string `json:"model"`
-	APIKey        string `json:"apiKey"`
-	ProxyID       string `json:"proxyId"`
-	TimeoutS      int    `json:"timeoutS"`
-	EnrichEnabled bool   `json:"enrichEnabled"`
-	RerankEnabled bool   `json:"rerankEnabled"`
+	BaseURL        string   `json:"baseUrl"`
+	APIStyle       string   `json:"apiStyle"`
+	Model          string   `json:"model"`
+	APIKey         string   `json:"apiKey"`
+	ProxyID        string   `json:"proxyId"`
+	TimeoutS       int      `json:"timeoutS"`
+	EnrichEnabled  bool     `json:"enrichEnabled"`
+	RerankEnabled  bool     `json:"rerankEnabled"`
+	RerankModel    string   `json:"rerankModel"`
+	FallbackModels []string `json:"fallbackModels"`
 }
 
 // TestResult 为测试连接的结果。
@@ -231,12 +238,13 @@ func (s *Service) currentProvider() (risk.Provider, bool) {
 func (s *Service) Config(context.Context) ConfigView {
 	p, ok := s.currentProvider()
 	if !ok {
-		return ConfigView{APIStyle: string(risk.APIStyleChatCompletions), TimeoutS: defaultTimeoutS}
+		return ConfigView{APIStyle: string(risk.APIStyleChatCompletions), TimeoutS: defaultTimeoutS, FallbackModels: []string{}}
 	}
 	view := ConfigView{
 		Configured: true, BaseURL: p.BaseURL, APIStyle: string(p.APIStyle), Model: p.Model,
 		HasKey: p.APIKey != "", ProxyID: p.ProxyID, TimeoutS: p.TimeoutS,
 		EnrichEnabled: p.EnrichEnabled, RerankEnabled: p.RerankEnabled,
+		RerankModel: p.RerankModel, FallbackModels: append([]string{}, p.FallbackModels...),
 	}
 	if r := []rune(p.APIKey); len(r) > 8 {
 		view.KeyHint = "…" + string(r[len(r)-4:])
@@ -273,6 +281,12 @@ func (s *Service) mergeInput(in ConfigInput) (risk.Provider, error) {
 		p.Name = defaultProviderName
 	}
 	p.EnrichEnabled, p.RerankEnabled = in.EnrichEnabled, in.RerankEnabled
+	p.RerankModel = strings.TrimSpace(in.RerankModel)
+	firstModel := p.RerankModel
+	if firstModel == "" {
+		firstModel = p.Model
+	}
+	p.FallbackModels = cleanModelList(in.FallbackModels, firstModel)
 	fields := map[string]string{}
 	if p.BaseURL == "" {
 		fields["baseUrl"] = "请填写接口地址"
@@ -331,6 +345,23 @@ func (s *Service) SaveConfig(ctx context.Context, in ConfigInput) (ConfigView, e
 	return s.Config(ctx), nil
 }
 
+// ListModels 用输入的配置（Key 留空则用已保存的）读取接口的模型列表（GET /models）。
+func (s *Service) ListModels(ctx context.Context, in ConfigInput) ([]string, error) {
+	if strings.TrimSpace(in.Model) == "" {
+		// 获取模型列表时还没有选模型，用占位值通过校验。
+		in.Model = "-"
+	}
+	p, err := s.mergeInput(in)
+	if err != nil {
+		return nil, err
+	}
+	models, err := s.client.listModels(ctx, p)
+	if err != nil {
+		return nil, domain.NewError(domain.CodeUpstreamUnavailable, err.Error())
+	}
+	return models, nil
+}
+
 // TestConnection 用输入的配置（Key 留空则用已保存的）发一次最小请求。
 func (s *Service) TestConnection(ctx context.Context, in ConfigInput) (TestResult, error) {
 	p, err := s.mergeInput(in)
@@ -350,23 +381,38 @@ func (s *Service) TestConnection(ctx context.Context, in ConfigInput) (TestResul
 
 // ── 检索集成 ──────────────────────────────────────────────────────────────
 
-// ToolKeywords 返回某工具的增强检索文本（中文简介 + 关键词 + 适用场景）；
-// 未开启工具说明增强或尚未生成时返回空串。
-func (s *Service) ToolKeywords(originalName, description string) string {
+// ToolKeywords 返回某工具的增强检索文本（中文简介 + 适用场景）与关键词列表；
+// 未开启工具说明增强或尚未生成时返回空值。
+func (s *Service) ToolKeywords(originalName, description string) (string, []string) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if s.provider == nil || !s.provider.EnrichEnabled {
-		return ""
+		return "", nil
 	}
 	item, ok := s.byHash[ToolHash(originalName, description)]
 	if !ok {
-		return ""
+		return "", nil
 	}
 	parts := append([]string{item.Summary}, item.Keywords...)
 	if item.UseWhen != "" {
 		parts = append(parts, item.UseWhen)
 	}
-	return strings.Join(parts, " ")
+	return strings.Join(parts, " "), append([]string(nil), item.Keywords...)
+}
+
+// ToolHints 返回工具的适用场景与配合工具，附在搜索结果中帮助客户端选择与安排调用顺序；
+// 未开启工具说明增强或尚未生成时返回空值。
+func (s *Service) ToolHints(originalName, description string) (string, []string) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.provider == nil || !s.provider.EnrichEnabled {
+		return "", nil
+	}
+	item, ok := s.byHash[ToolHash(originalName, description)]
+	if !ok {
+		return "", nil
+	}
+	return item.UseWhen, append([]string(nil), item.Related...)
 }
 
 // RerankEnabled 报告 AI 挑选工具是否可用。
@@ -449,7 +495,8 @@ func (s *Service) Rerank(ctx context.Context, query string, candidates []Candida
 	for _, c := range candidates {
 		names = append(names, c.Name)
 	}
-	cacheKey := hashOf(p.Model, p.BaseURL, strings.TrimSpace(query), fmt.Sprint(limit), strings.Join(names, "\x00"))
+	models := rerankModels(p)
+	cacheKey := hashOf(strings.Join(models, ","), p.BaseURL, strings.TrimSpace(query), fmt.Sprint(limit), strings.Join(names, "\x00"))
 	if cached, ok := s.cachedRerank(cacheKey); ok {
 		cached.Cached = true
 		return cached, nil
@@ -474,24 +521,49 @@ func (s *Service) Rerank(ctx context.Context, query string, candidates []Candida
 	s.mu.RUnlock()
 	user, _ := json.Marshal(map[string]any{"query": query, "candidates": lines})
 
-	timeout := min(time.Duration(p.TimeoutS)*time.Second, maxRerankTimeout)
+	// 每个模型单独限时；主模型失败、超时或回复无法解析时按顺序换备用模型，整体不超过 maxRerankTotal。
+	attemptTimeout := min(time.Duration(p.TimeoutS)*time.Second, maxRerankTimeout)
+	ctx, cancel := context.WithTimeout(ctx, maxRerankTotal)
+	defer cancel()
 	started := s.now()
-	text, _, err := s.client.complete(ctx, p, fmt.Sprintf(rerankSystemPrompt, limit), string(user), timeout)
-	if err != nil {
-		return RerankResult{}, err
+	var (
+		parsed struct {
+			Tools []string `json:"tools"`
+			Note  string   `json:"note"`
+		}
+		usedModel string
+		failures  []string
+	)
+	for _, model := range models {
+		if ctx.Err() != nil {
+			break
+		}
+		attempt := p
+		attempt.Model = model
+		text, _, err := s.client.complete(ctx, attempt, fmt.Sprintf(rerankSystemPrompt, limit), string(user), attemptTimeout)
+		if err == nil {
+			err = decodeJSONObject(text, &parsed)
+		}
+		if err != nil {
+			failures = append(failures, model+"："+err.Error())
+			s.logger.Warn("AI 挑选工具的模型调用失败", "model", model, "error", err)
+			continue
+		}
+		usedModel = model
+		break
 	}
-	var parsed struct {
-		Tools []string `json:"tools"`
-		Note  string   `json:"note"`
-	}
-	if err := decodeJSONObject(text, &parsed); err != nil {
-		return RerankResult{}, err
+	if usedModel == "" {
+		if len(failures) == 0 {
+			failures = append(failures, "超出总时限")
+		}
+		return RerankResult{}, errors.New("所有模型均失败：" + strings.Join(failures, "；"))
 	}
 	allowed := make(map[string]struct{}, len(names))
 	for _, n := range names {
 		allowed[n] = struct{}{}
 	}
-	result := RerankResult{Names: []string{}, Note: truncateRunes(strings.TrimSpace(parsed.Note), 120), LatencyMS: s.now().Sub(started).Milliseconds()}
+	result := RerankResult{Names: []string{}, Note: truncateRunes(strings.TrimSpace(parsed.Note), 120), LatencyMS: s.now().Sub(started).Milliseconds(),
+		Model: usedModel, FallbackUsed: usedModel != models[0], Failures: failures}
 	seen := map[string]struct{}{}
 	for _, n := range parsed.Tools {
 		n = strings.TrimSpace(n)
@@ -540,6 +612,41 @@ func (s *Service) clearRerankCache() {
 	s.cacheMu.Lock()
 	s.rerankCache = map[string]rerankEntry{}
 	s.cacheMu.Unlock()
+}
+
+// rerankModels 返回 AI 挑选依次尝试的模型：挑选模型（未设置则用主模型）+ 备用模型。
+func rerankModels(p risk.Provider) []string {
+	first := strings.TrimSpace(p.RerankModel)
+	if first == "" {
+		first = p.Model
+	}
+	return append([]string{first}, cleanModelList(p.FallbackModels, first)...)
+}
+
+// cleanModelList 去空白、去重、去掉与 exclude 相同的模型，最多保留 maxFallbackModels 个。
+func cleanModelList(models []string, exclude ...string) []string {
+	seen := map[string]struct{}{}
+	for _, e := range exclude {
+		if e = strings.TrimSpace(e); e != "" {
+			seen[e] = struct{}{}
+		}
+	}
+	out := []string{}
+	for _, m := range models {
+		m = strings.TrimSpace(m)
+		if m == "" || len([]rune(m)) > 200 {
+			continue
+		}
+		if _, dup := seen[m]; dup {
+			continue
+		}
+		seen[m] = struct{}{}
+		out = append(out, m)
+		if len(out) >= maxFallbackModels {
+			break
+		}
+	}
+	return out
 }
 
 // ── 指纹与服务名 ──────────────────────────────────────────────────────────

@@ -13,6 +13,10 @@ export interface SmartDiscoveryConfig {
   timeoutS: number
   enrichEnabled: boolean
   rerankEnabled: boolean
+  /** AI 挑选工具使用的模型，空表示使用 model。 */
+  rerankModel: string
+  /** AI 挑选失败时依次尝试的备用模型。 */
+  fallbackModels: string[]
 }
 
 export interface SmartDiscoveryInput {
@@ -25,6 +29,8 @@ export interface SmartDiscoveryInput {
   timeoutS: number
   enrichEnabled: boolean
   rerankEnabled: boolean
+  rerankModel: string
+  fallbackModels: string[]
 }
 
 export interface SmartDiscoveryStatus {
@@ -72,6 +78,15 @@ export interface SearchToolSummary {
   description: string
   upstream?: string
   sourceCount?: number
+  useWhen?: string
+  related?: string[]
+}
+
+export interface RerankInfo {
+  model?: string
+  fallbackUsed?: boolean
+  failures?: string[]
+  cached?: boolean
 }
 
 export interface SearchPage {
@@ -86,6 +101,7 @@ export interface SmartDiscoveryPreview {
   aiEnabled: boolean
   aiError?: string
   aiLatencyMs?: number
+  aiInfo?: RerankInfo
 }
 
 export const getSmartDiscovery = () => requestData<SmartDiscoveryState>({ url: '/smart-discovery' })
@@ -100,6 +116,16 @@ export const testSmartDiscovery = (data: SmartDiscoveryInput) =>
     data,
     timeout: 60000,
   })
+
+export async function listSmartDiscoveryModels(data: SmartDiscoveryInput): Promise<string[]> {
+  const res = await requestData<{ models: string[] | null }>({
+    url: '/smart-discovery/models',
+    method: 'POST',
+    data,
+    timeout: 45000,
+  })
+  return res.models ?? []
+}
 
 export const startSmartDiscoveryEnrich = (force: boolean) =>
   requestData<SmartDiscoveryStatus>({

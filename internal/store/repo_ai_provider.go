@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 
 	"gorm.io/gorm"
@@ -36,6 +37,7 @@ func (r *AIProviderRepo) Update(ctx context.Context, p risk.Provider) (risk.Prov
 		"timeout_s": p.TimeoutS, "batch_size": p.BatchSize, "max_concurrency": p.MaxConcurrency,
 		"auto_assess": p.AutoAssess, "proxy_id": p.ProxyID,
 		"discovery_enrich": p.EnrichEnabled, "discovery_rerank": p.RerankEnabled,
+		"discovery_rerank_model": p.RerankModel, "discovery_fallback_models": encodeModelList(p.FallbackModels),
 		"updated_at": time.Now().UTC(),
 	}
 	if !p.Enabled {
@@ -124,7 +126,27 @@ func providerToModel(p risk.Provider) aiProviderModel {
 		TimeoutS: p.TimeoutS, BatchSize: p.BatchSize,
 		MaxConcurrency: p.MaxConcurrency, AutoAssess: p.AutoAssess,
 		ProxyID: p.ProxyID, EnrichEnabled: p.EnrichEnabled, RerankEnabled: p.RerankEnabled,
+		RerankModel: p.RerankModel, FallbackModels: encodeModelList(p.FallbackModels),
 		CreatedAt: p.CreatedAt, UpdatedAt: p.UpdatedAt}
+}
+
+func encodeModelList(models []string) string {
+	if len(models) == 0 {
+		return "[]"
+	}
+	raw, err := json.Marshal(models)
+	if err != nil {
+		return "[]"
+	}
+	return string(raw)
+}
+
+func decodeModelList(raw string) []string {
+	var models []string
+	if json.Unmarshal([]byte(raw), &models) != nil || len(models) == 0 {
+		return nil
+	}
+	return models
 }
 
 func modelToProvider(m aiProviderModel) risk.Provider {
@@ -133,5 +155,6 @@ func modelToProvider(m aiProviderModel) risk.Provider {
 		TimeoutS: m.TimeoutS, BatchSize: m.BatchSize,
 		MaxConcurrency: m.MaxConcurrency, AutoAssess: m.AutoAssess,
 		ProxyID: m.ProxyID, EnrichEnabled: m.EnrichEnabled, RerankEnabled: m.RerankEnabled,
+		RerankModel: m.RerankModel, FallbackModels: decodeModelList(m.FallbackModels),
 		CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt}
 }

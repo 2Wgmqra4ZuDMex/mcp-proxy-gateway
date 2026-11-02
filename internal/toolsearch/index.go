@@ -3,6 +3,7 @@ package toolsearch
 import (
 	"sort"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -22,6 +23,15 @@ const (
 	minPrefixLen          = 3
 	synonymDiscount       = 0.6
 	reversePrefixDiscount = 0.7
+	// AI 关键词整体出现在查询中的权重，高于工具名（3.0）。
+	phraseWeight          = 3.5
+	loosePhraseWeight     = 2.5
+	phraseBonus           = 0.5
+	maxPhraseBonusHits    = 4
+	hanCharWeight         = 0.4
+	maxKeywordPhrases     = 40
+	maxKeywordPhraseRunes = 40
+	maxExtraWords         = 20000
 )
 
 // Doc is the searchable projection of one already-authorized tool.
@@ -31,8 +41,11 @@ type Doc struct {
 	Description   string
 	UpstreamNames []string
 	UpstreamTags  []string
-	// Keywords 为 AI 生成的中文简介、中英文关键词与适用场景，可为空。
+	// Keywords 为 AI 生成的中文简介、关键词与适用场景拼成的文本，可为空。
 	Keywords string
+	// KeywordPhrases 为 AI 生成的关键词列表。查询中出现完整关键词时整体加分，
+	// 其中的中文词也作为本索引的补充分词词表。
+	KeywordPhrases []string
 }
 
 // Hit describes a matching document. DocIndex points into the docs passed to
@@ -59,6 +72,8 @@ type indexedDoc struct {
 	descTokens map[string]struct{}
 	upTokens   map[string]struct{}
 	kwTokens   map[string]struct{}
+	phrases    []string
+	hanChars   map[rune]struct{}
 	nameRaw    string
 	descRaw    string
 	kwRaw      string
@@ -69,6 +84,8 @@ type Index struct {
 	docs      []Doc
 	indexed   []indexedDoc
 	allTokens map[string]int
+	// extraWords 为所有文档 AI 关键词中的中文词，查询与文档用同一份词表切分。
+	extraWords map[string]struct{}
 }
 
 // Build creates a reusable index for a tool collection. Input order is kept
@@ -81,37 +98,65 @@ func Build(docs []Doc) *Index {
 		safeDocs[index].UpstreamTags = append([]string(nil), safeDocs[index].UpstreamTags...)
 	}
 	ix := &Index{
-		docs:      safeDocs,
-		indexed:   make([]indexedDoc, 0, len(safeDocs)),
-		allTokens: make(map[string]int),
+		docs:       safeDocs,
+		indexed:    make([]indexedDoc, 0, len(safeDocs)),
+		allTokens:  make(map[string]int),
+		extraWords: make(map[string]struct{}),
 	}
+	docPhrases := make([][]string, len(safeDocs))
+	for index, doc := range safeDocs {
+		phrases := make([]string, 0, len(doc.KeywordPhrases))
+		for _, phrase := range doc.KeywordPhrases {
+			phrase = normalizeQuery(truncateRunes(phrase, maxKeywordPhraseRunes))
+			if utf8.RuneCountInString(phrase) < 2 || len(phrases) >= maxKeywordPhrases {
+				continue
+			}
+			phrases = append(phrases, phrase)
+			if isHanWord(phrase) && len(ix.extraWords) < maxExtraWords {
+				ix.extraWords[phrase] = struct{}{}
+			}
+		}
+		docPhrases[index] = phrases
+	}
+	extra := ix.extraWords
+	tok := func(value string, limit int) []string { return tokenizeWith(value, limit, extra) }
 	for index, doc := range safeDocs {
 		nameValue := truncateRunes(doc.Name, maxIndexedFieldRunes)
 		originalNameValue := truncateRunes(doc.OriginalName, maxIndexedFieldRunes)
 		descriptionValue := truncateRunes(doc.Description, maxDescriptionRunes)
-		name := toTokenSet(Tokenize(nameValue), 0)
+		name := toTokenSet(tok(nameValue, 0), 0)
 		orig := map[string]struct{}(nil)
 		if normalizeQuery(originalNameValue) != normalizeQuery(nameValue) {
-			orig = toTokenSet(Tokenize(originalNameValue), 0)
+			orig = toTokenSet(tok(originalNameValue, 0), 0)
 		}
 		// Keep the existing "first 200 tokens" search semantics without
 		// materializing tokens for an arbitrarily large upstream description.
-		desc := toTokenSet(tokenize(descriptionValue, descTokenLimit), 0)
+		desc := toTokenSet(tok(descriptionValue, descTokenLimit), 0)
 		up := make(map[string]struct{})
 		for _, values := range [][]string{doc.UpstreamNames, doc.UpstreamTags} {
 			for _, value := range values {
-				for token := range toTokenSet(Tokenize(truncateRunes(value, maxIndexedFieldRunes)), 0) {
+				for token := range toTokenSet(tok(truncateRunes(value, maxIndexedFieldRunes), 0), 0) {
 					up[token] = struct{}{}
 				}
 			}
 		}
 		keywordsValue := truncateRunes(doc.Keywords, maxDescriptionRunes)
+		hanChars := make(map[rune]struct{})
+		for _, value := range []string{keywordsValue, descriptionValue, strings.Join(docPhrases[index], " ")} {
+			for _, r := range value {
+				if unicode.Is(unicode.Han, r) {
+					hanChars[r] = struct{}{}
+				}
+			}
+		}
 		ix.indexed = append(ix.indexed, indexedDoc{
 			nameTokens: name,
 			origTokens: orig,
 			descTokens: desc,
 			upTokens:   up,
-			kwTokens:   toTokenSet(tokenize(keywordsValue, descTokenLimit), 0),
+			kwTokens:   toTokenSet(tok(keywordsValue, descTokenLimit), 0),
+			phrases:    docPhrases[index],
+			hanChars:   hanChars,
 			nameRaw:    normalizeQuery(nameValue),
 			descRaw:    strings.ToLower(descriptionValue),
 			kwRaw:      strings.ToLower(keywordsValue),
@@ -132,6 +177,7 @@ func Build(docs []Doc) *Index {
 		safeDocs[index].Description = ""
 		safeDocs[index].UpstreamTags = nil
 		safeDocs[index].Keywords = ""
+		safeDocs[index].KeywordPhrases = nil
 	}
 	return ix
 }
@@ -155,7 +201,7 @@ func (ix *Index) Search(query string, limit, offset int) Result {
 	}
 	rawQuery := normalizeQuery(query)
 	expandedQuery := applyPhraseSynonyms(rawQuery)
-	rawTerms := dedupeKeepOrder(Tokenize(expandedQuery))
+	rawTerms := dedupeKeepOrder(tokenizeWith(expandedQuery, 0, ix.extraWords))
 	terms := removeStopwords(rawTerms)
 	if len(terms) == 0 {
 		terms = rawTerms
@@ -167,24 +213,40 @@ func (ix *Index) Search(query string, limit, offset int) Result {
 		return Result{Hits: []Hit{}, Suggestions: []string{}}
 	}
 
+	compactQuery := strings.ReplaceAll(rawQuery, " ", "")
+	compactRunes := []rune(compactQuery)
 	hits := make([]Hit, 0)
 	for docIndex, doc := range ix.indexed {
 		covered := 0
 		score := 0.0
 		matched := make([]string, 0, len(terms))
+		phraseHits := matchedPhrases(doc.phrases, rawQuery, compactQuery, compactRunes)
 		for _, term := range terms {
 			best := ix.fieldBest(doc, term)
 			for _, synonym := range tokenSynonyms[term] {
 				best = max(best, synonymDiscount*ix.fieldBest(doc, synonym))
 			}
+			for _, hit := range phraseHits {
+				if strings.Contains(hit.phrase, term) {
+					best = max(best, hit.weight)
+				}
+			}
 			if best == 0 {
+				// 中文单字（如"截个图"中的"图"）只在文档含该字时给少量分，不计入覆盖数，
+				// 避免单字把无关工具排到前面。
+				if r := []rune(term); len(r) == 1 && unicode.Is(unicode.Han, r[0]) {
+					if _, ok := doc.hanChars[r[0]]; ok {
+						score += hanCharWeight
+					}
+				}
 				continue
 			}
 			covered++
 			score += best
 			matched = append(matched, term)
 		}
-		if covered == 0 {
+		score += phraseBonus * float64(min(len(phraseHits), maxPhraseBonusHits))
+		if covered == 0 && score == 0 {
 			continue
 		}
 		score += wholeStringBonus(doc.nameRaw, rawQuery)
@@ -195,6 +257,26 @@ func (ix *Index) Search(query string, limit, offset int) Result {
 	}
 	sortHits(ix.docs, hits)
 	return Result{Hits: sliceHits(hits, offset, limit), Total: len(hits), Suggestions: []string{}}
+}
+
+type phraseHit struct {
+	phrase string
+	weight float64
+}
+
+// matchedPhrases 返回出现在查询中的 AI 关键词：完整出现（中文忽略空格）权重最高，
+// 汉字短语在查询中间隔出现（"截图"↔"截个图"）权重稍低。
+func matchedPhrases(phrases []string, rawQuery, compactQuery string, compactRunes []rune) []phraseHit {
+	var hits []phraseHit
+	for _, phrase := range phrases {
+		switch {
+		case strings.Contains(rawQuery, phrase) || (isHanWord(phrase) && strings.Contains(compactQuery, phrase)):
+			hits = append(hits, phraseHit{phrase: phrase, weight: phraseWeight})
+		case isHanWord(phrase) && looseHanPhraseMatch(compactRunes, []rune(phrase)):
+			hits = append(hits, phraseHit{phrase: phrase, weight: loosePhraseWeight})
+		}
+	}
+	return hits
 }
 
 func (ix *Index) fieldBest(doc indexedDoc, term string) float64 {

@@ -8,6 +8,7 @@ import { listAPIKeys, type APIKey } from '@/api/apikeys'
 import {
   getSmartDiscovery,
   listEnrichedTools,
+  listSmartDiscoveryModels,
   previewSmartSearch,
   saveSmartDiscovery,
   startSmartDiscoveryEnrich,
@@ -42,8 +43,14 @@ const form = reactive<SmartDiscoveryInput>({
   timeoutS: 60,
   enrichEnabled: false,
   rerankEnabled: false,
+  rerankModel: '',
+  fallbackModels: [],
 })
 const saving = ref(false)
+const availableModels = ref<string[]>([])
+const fetchingModels = ref(false)
+const modelsError = ref('')
+const newFallbackModel = ref('')
 const testing = ref(false)
 const testResult = ref<SmartDiscoveryTestResult | null>(null)
 const testError = ref('')
@@ -82,6 +89,73 @@ function applyConfig(next: SmartDiscoveryConfig): void {
   form.timeoutS = next.timeoutS || 60
   form.enrichEnabled = next.enrichEnabled
   form.rerankEnabled = next.rerankEnabled
+  form.rerankModel = next.rerankModel ?? ''
+  form.fallbackModels = [...(next.fallbackModels ?? [])]
+}
+
+function formPayload(): SmartDiscoveryInput {
+  return {
+    ...form,
+    baseUrl: form.baseUrl.trim(),
+    model: form.model.trim(),
+    rerankModel: form.rerankModel.trim(),
+    fallbackModels: [...form.fallbackModels],
+  }
+}
+
+async function fetchModels(): Promise<void> {
+  modelsError.value = ''
+  if (form.baseUrl.trim() === '') {
+    modelsError.value = '请先填写接口地址'
+    return
+  }
+  if (!config.value?.hasKey && form.apiKey.trim() === '') {
+    modelsError.value = '请先填写 API Key'
+    return
+  }
+  fetchingModels.value = true
+  try {
+    availableModels.value = await listSmartDiscoveryModels(formPayload())
+    if (availableModels.value.length === 0)
+      modelsError.value = '接口没有返回任何模型，可以直接手动填写'
+    else toast.success(`获取到 ${availableModels.value.length} 个模型`)
+  } catch (err) {
+    modelsError.value = errorText(err, '获取模型列表失败，可以直接手动填写')
+  } finally {
+    fetchingModels.value = false
+  }
+}
+
+function addFallbackModel(): void {
+  const name = newFallbackModel.value.trim()
+  if (name === '') return
+  const first = form.rerankModel.trim() || form.model.trim()
+  if (name === first) {
+    toast.error('备用模型不能和挑选使用的模型相同')
+    return
+  }
+  if (form.fallbackModels.includes(name)) {
+    toast.error('已在备用模型中')
+    return
+  }
+  if (form.fallbackModels.length >= 5) {
+    toast.error('最多 5 个备用模型')
+    return
+  }
+  form.fallbackModels.push(name)
+  newFallbackModel.value = ''
+}
+
+function removeFallbackModel(index: number): void {
+  form.fallbackModels.splice(index, 1)
+}
+
+function moveFallbackModel(index: number, delta: number): void {
+  const target = index + delta
+  if (target < 0 || target >= form.fallbackModels.length) return
+  const list = [...form.fallbackModels]
+  ;[list[index], list[target]] = [list[target]!, list[index]!]
+  form.fallbackModels = list
 }
 
 async function loadTools(): Promise<void> {
@@ -165,11 +239,7 @@ async function save(): Promise<void> {
   if (!validate()) return
   saving.value = true
   try {
-    const state = await saveSmartDiscovery({
-      ...form,
-      baseUrl: form.baseUrl.trim(),
-      model: form.model.trim(),
-    })
+    const state = await saveSmartDiscovery(formPayload())
     applyConfig(state.config)
     status.value = state.status
     toast.success('已保存')
@@ -187,11 +257,7 @@ async function runTest(): Promise<void> {
   testResult.value = null
   testError.value = ''
   try {
-    testResult.value = await testSmartDiscovery({
-      ...form,
-      baseUrl: form.baseUrl.trim(),
-      model: form.model.trim(),
-    })
+    testResult.value = await testSmartDiscovery(formPayload())
   } catch (err) {
     testError.value = errorText(err, '连接失败')
   } finally {
@@ -243,7 +309,9 @@ const savedDiffers = computed(() => {
     form.proxyId !== c.proxyId ||
     form.timeoutS !== c.timeoutS ||
     form.enrichEnabled !== c.enrichEnabled ||
-    form.rerankEnabled !== c.rerankEnabled
+    form.rerankEnabled !== c.rerankEnabled ||
+    form.rerankModel !== (c.rerankModel ?? '') ||
+    form.fallbackModels.join('\n') !== (c.fallbackModels ?? []).join('\n')
   )
 })
 
@@ -366,17 +434,47 @@ const btnOutline =
             </p>
           </div>
           <div>
-            <label :class="labelClass" for="sd-model">模型</label>
+            <div class="mb-1.5 flex items-center justify-between gap-2">
+              <label
+                class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                for="sd-model"
+                >模型</label
+              >
+              <button
+                type="button"
+                class="text-brand-600 dark:text-brand-400 text-xs font-medium hover:underline disabled:opacity-50"
+                :disabled="fetchingModels"
+                @click="fetchModels"
+              >
+                {{
+                  fetchingModels
+                    ? '获取中…'
+                    : availableModels.length > 0
+                      ? `重新获取（${availableModels.length} 个）`
+                      : '获取模型列表'
+                }}
+              </button>
+            </div>
             <input
               id="sd-model"
               v-model="form.model"
               :class="inputClass"
+              list="sd-model-options"
               placeholder="例如 deepseek-chat、qwen-turbo"
               autocomplete="off"
               spellcheck="false"
             />
+            <datalist id="sd-model-options">
+              <option v-for="m in availableModels" :key="m" :value="m" />
+            </datalist>
             <p v-if="formErrors.model" class="text-error-500 mt-1 text-xs">
               {{ formErrors.model }}
+            </p>
+            <p v-else-if="modelsError" class="text-warning-600 dark:text-warning-400 mt-1 text-xs">
+              {{ modelsError }}
+            </p>
+            <p v-else-if="availableModels.length > 0" class="mt-1 text-xs text-gray-400">
+              点击输入框可从列表中选择，也可以直接输入。
             </p>
           </div>
           <div>
@@ -456,11 +554,99 @@ const btnOutline =
                 >
                 <span class="mt-1 block text-xs leading-5 text-gray-500 dark:text-gray-400">
                   客户端搜索工具时，让 AI
-                  从候选里挑出最合适的几个，并说明调用顺序。每次搜索调用一次模型，多等 1～2
-                  秒；搜索内容会发给模型服务商。失败时自动改用关键词搜索。
+                  从候选里挑出最合适的几个，并说明调用顺序。每次搜索调用一次模型，多等 1～4
+                  秒；搜索内容会发给模型服务商。模型都失败时自动改用关键词搜索。
                 </span>
               </span>
             </label>
+          </div>
+
+          <div
+            v-if="form.rerankEnabled"
+            class="grid grid-cols-1 gap-4 rounded-xl bg-gray-50 p-4 md:col-span-2 lg:grid-cols-2 dark:bg-white/[0.02]"
+          >
+            <div>
+              <label :class="labelClass" for="sd-rerank-model">挑选使用的模型</label>
+              <input
+                id="sd-rerank-model"
+                v-model="form.rerankModel"
+                :class="inputClass"
+                list="sd-model-options"
+                :placeholder="`留空则使用上面的模型（${form.model || '未填写'}）`"
+                autocomplete="off"
+                spellcheck="false"
+              />
+              <p class="mt-1 text-xs text-gray-400">
+                挑选工具对速度敏感，可以选一个更快的小模型；工具说明仍用上面的模型生成。
+              </p>
+            </div>
+            <div>
+              <label :class="labelClass" for="sd-fallback-input">备用模型</label>
+              <div class="flex gap-2">
+                <input
+                  id="sd-fallback-input"
+                  v-model="newFallbackModel"
+                  :class="inputClass"
+                  list="sd-model-options"
+                  placeholder="输入或选择模型后点添加"
+                  autocomplete="off"
+                  spellcheck="false"
+                  @keydown.enter.prevent="addFallbackModel"
+                />
+                <button
+                  type="button"
+                  :class="[btnOutline, 'shrink-0 px-3']"
+                  :disabled="newFallbackModel.trim() === ''"
+                  @click="addFallbackModel"
+                >
+                  添加
+                </button>
+              </div>
+              <p class="mt-1 text-xs text-gray-400">
+                挑选模型失败、超时或回复无法解析时，按顺序依次改用，最多 5 个。
+              </p>
+              <ol v-if="form.fallbackModels.length > 0" class="mt-2 space-y-1.5">
+                <li
+                  v-for="(m, i) in form.fallbackModels"
+                  :key="m"
+                  class="flex items-center gap-2 rounded-lg bg-white px-3 py-1.5 text-sm dark:bg-gray-900"
+                >
+                  <span class="text-xs text-gray-400">{{ i + 1 }}</span>
+                  <span
+                    class="min-w-0 flex-1 truncate font-mono text-gray-800 dark:text-white/90"
+                    >{{ m }}</span
+                  >
+                  <button
+                    type="button"
+                    class="px-1 text-xs text-gray-500 hover:text-gray-800 disabled:opacity-30 dark:hover:text-white"
+                    :disabled="i === 0"
+                    :aria-label="`${m} 上移`"
+                    v-tooltip="'上移'"
+                    @click="moveFallbackModel(i, -1)"
+                  >
+                    ↑
+                  </button>
+                  <button
+                    type="button"
+                    class="px-1 text-xs text-gray-500 hover:text-gray-800 disabled:opacity-30 dark:hover:text-white"
+                    :disabled="i === form.fallbackModels.length - 1"
+                    :aria-label="`${m} 下移`"
+                    v-tooltip="'下移'"
+                    @click="moveFallbackModel(i, 1)"
+                  >
+                    ↓
+                  </button>
+                  <button
+                    type="button"
+                    class="text-error-500 px-1 text-xs hover:underline"
+                    :aria-label="`移除备用模型 ${m}`"
+                    @click="removeFallbackModel(i)"
+                  >
+                    移除
+                  </button>
+                </li>
+              </ol>
+            </div>
           </div>
 
           <div class="flex flex-col gap-3 sm:flex-row sm:items-center md:col-span-2">
@@ -607,6 +793,9 @@ const btnOutline =
                 <span class="mr-1 text-gray-400">{{ i + 1 }}.</span>
                 <span class="font-mono text-gray-800 dark:text-white/90">{{ tool.name }}</span>
                 <span class="ml-1 text-xs text-gray-400">{{ tool.upstream }}</span>
+                <span v-if="i < 3 && tool.related?.length" class="ml-1 text-xs text-gray-400"
+                  >· 配合 {{ tool.related.join('、') }}</span
+                >
               </li>
             </ol>
             <p v-else class="mt-2 text-sm text-gray-400">
@@ -617,8 +806,16 @@ const btnOutline =
             <p class="text-sm font-medium text-gray-800 dark:text-white/90">
               AI 挑选
               <span v-if="preview.ai" class="ml-1 text-xs font-normal text-gray-400"
-                >{{ preview.aiLatencyMs }} ms</span
+                >{{ preview.aiLatencyMs }} ms<template v-if="preview.aiInfo?.model">
+                  · {{ preview.aiInfo.model }}</template
+                ><template v-if="preview.aiInfo?.cached"> · 缓存</template></span
               >
+            </p>
+            <p
+              v-if="preview.aiInfo?.fallbackUsed"
+              class="text-warning-600 dark:text-warning-400 mt-1 text-xs break-all"
+            >
+              主模型失败，已改用备用模型：{{ (preview.aiInfo.failures ?? []).join('；') }}
             </p>
             <p v-if="!preview.aiEnabled" class="mt-2 text-sm text-gray-400">
               未开启「AI 挑选工具」。

@@ -45,4 +45,9 @@ type RerankResult struct {
 	Note      string   `json:"note,omitempty"`
 	LatencyMS int64    `json:"latencyMs"`
 	Cached    bool     `json:"cached,omitempty"`
+	// Model 为实际给出结果的模型；FallbackUsed 表示主模型失败后由备用模型给出；
+	// Failures 为之前失败的模型及原因。
+	Model        string   `json:"model,omitempty"`
+	FallbackUsed bool     `json:"fallbackUsed,omitempty"`
+	Failures     []string `json:"failures,omitempty"`
 }

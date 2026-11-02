@@ -199,6 +199,8 @@ type aiProviderModel struct {
 	ProxyID        string    `gorm:"column:proxy_id;type:varchar(64);not null;default:''"`
 	EnrichEnabled  bool      `gorm:"column:discovery_enrich;type:boolean;not null;default:false"`
 	RerankEnabled  bool      `gorm:"column:discovery_rerank;type:boolean;not null;default:false"`
+	RerankModel    string    `gorm:"column:discovery_rerank_model;type:varchar(200);not null;default:''"`
+	FallbackModels string    `gorm:"column:discovery_fallback_models;type:text;not null;default:'[]'"`
 	CreatedAt      time.Time `gorm:"column:created_at;type:timestamptz;not null;default:now();autoCreateTime:false"`
 	UpdatedAt      time.Time `gorm:"column:updated_at;type:timestamptz;not null;default:now();autoUpdateTime:false"`
 }

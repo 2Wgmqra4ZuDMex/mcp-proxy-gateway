@@ -13,7 +13,7 @@ func TestTokenizeCommonToolFormats(t *testing.T) {
 		"userTimeline":                {"user", "timeline"},
 		"HTTPServer":                  {"http", "server"},
 		"vm100":                       {"vm", "100"},
-		"虚拟机":                         {"虚", "拟", "机", "虚拟", "拟机"},
+		"虚拟机":                         {"虚拟", "机"},
 		"___":                         {},
 	}
 	for input, want := range tests {

@@ -86,6 +86,14 @@ type ToolSummary struct {
 	SourceCount int `json:"sourceCount,omitempty"`
 	// SchemaConflict prompts callers to obtain the current input schema first.
 	SchemaConflict bool `json:"schemaConflict,omitempty"`
+	// UseWhen / Related 来自工具说明增强：适用场景与通常需要先调用或配合使用的工具。
+	UseWhen string   `json:"useWhen,omitempty"`
+	Related []string `json:"related,omitempty"`
+}
+
+// toolHinter 为可选能力：提供工具的适用场景与配合工具。
+type toolHinter interface {
+	ToolHints(originalName, description string) (string, []string)
 }
 
 // UpstreamSummary is the compact first-page overview for large tool sets.
@@ -113,6 +121,8 @@ type SearchPage struct {
 	Hint        string        `json:"hint,omitempty"`
 	// RankedBy 为 "ai" 时表示结果由 AI 从候选中挑选并按建议调用顺序排列。
 	RankedBy string `json:"rankedBy,omitempty"`
+	// AI 为挑选过程的信息（实际使用的模型、是否用了备用模型），只在管理台试搜中展示。
+	AI *discovery.RerankResult `json:"-"`
 }
 
 // SmartAssistant 为智能模式的 AI 辅助能力（可选）：挑选工具与服务清单。
@@ -293,6 +303,14 @@ func (h *SmartModeHandler) ListTools(ctx context.Context, apiKeyID, cursor, upst
 //
 // 返回的 Tools 和 Suggestions 始终非 nil。
 func (h *SmartModeHandler) SearchTools(ctx context.Context, apiKeyID, query, cursor string, limit int) (SearchPage, error) {
+	page, err := h.searchTools(ctx, apiKeyID, query, cursor, limit)
+	if err != nil {
+		return page, err
+	}
+	return page, nil
+}
+
+func (h *SmartModeHandler) searchTools(ctx context.Context, apiKeyID, query, cursor string, limit int) (SearchPage, error) {
 	useAI := cursor == "" && h.assistant != nil && h.assistant.RerankEnabled()
 	keyword, ai, aiErr, err := h.SearchToolsDetailed(ctx, apiKeyID, query, cursor, limit, useAI)
 	if err != nil {
@@ -320,6 +338,11 @@ func (h *SmartModeHandler) SearchToolsDetailed(ctx context.Context, apiKeyID, qu
 	if err != nil {
 		return SearchPage{}, nil, nil, err
 	}
+	byName := make(map[string]domain.ToolDef, len(tools))
+	for _, tool := range tools {
+		byName[tool.Name] = tool
+	}
+	h.attachHints(&page, byName)
 	if !useAI || h.assistant == nil || strings.TrimSpace(query) == "" {
 		return page, nil, nil, nil
 	}
@@ -327,7 +350,33 @@ func (h *SmartModeHandler) SearchToolsDetailed(ctx context.Context, apiKeyID, qu
 	if aiErr != nil {
 		return page, nil, aiErr, nil
 	}
+	h.attachHints(&ai, byName)
 	return page, &ai, nil, nil
+}
+
+// attachHints 为搜索结果附上适用场景与配合工具（配合工具只保留当前可见的）。
+func (h *SmartModeHandler) attachHints(page *SearchPage, byName map[string]domain.ToolDef) {
+	hinter, ok := h.assistant.(toolHinter)
+	if !ok || hinter == nil {
+		return
+	}
+	for i := range page.Tools {
+		tool, found := byName[page.Tools[i].Name]
+		if !found {
+			continue
+		}
+		useWhen, related := hinter.ToolHints(tool.OriginalName, tool.Description)
+		page.Tools[i].UseWhen = useWhen
+		visible := make([]string, 0, len(related))
+		for _, name := range related {
+			if _, ok := byName[name]; ok {
+				visible = append(visible, name)
+			}
+		}
+		if len(visible) > 0 {
+			page.Tools[i].Related = visible
+		}
+	}
 }
 
 func (h *SmartModeHandler) keywordSearch(ctx context.Context, apiKeyID, query, cursor string, limit int) (SearchPage, []domain.ToolDef, map[string]smartToolSources, *toolsearch.Index, error) {
@@ -410,6 +459,9 @@ func (h *SmartModeHandler) aiSearch(ctx context.Context, query string, limit int
 		}
 	}
 	page.Hint = result.Note
+	info := result
+	info.Names = nil
+	page.AI = &info
 	return page, nil
 }
 

@@ -7,9 +7,10 @@ import (
 
 // Tokenize splits tool-oriented identifiers and natural-language text into
 // lower-cased tokens. It understands common identifier separators, camel case,
-// acronym boundaries, letter/number boundaries, and Chinese Han characters.
+// acronym boundaries, letter/number boundaries, and Chinese text (segmented into
+// words with an embedded common-word dictionary).
 func Tokenize(s string) []string {
-	return tokenize(s, 0)
+	return tokenizeWith(s, 0, nil)
 }
 
 // tokenize applies the same token order as Tokenize while allowing internal
@@ -17,6 +18,11 @@ func Tokenize(s string) []string {
 // indexing uses it to avoid materializing thousands of CJK bigrams that will
 // be discarded by descTokenLimit.
 func tokenize(s string, maxTokens int) []string {
+	return tokenizeWith(s, maxTokens, nil)
+}
+
+// tokenizeWith 与 tokenize 相同，extra 为本次索引补充的中文词（AI 生成的关键词）。
+func tokenizeWith(s string, maxTokens int, extra map[string]struct{}) []string {
 	runes := []rune(s)
 	capacity := len(runes)
 	if maxTokens > 0 && capacity > maxTokens {
@@ -47,19 +53,8 @@ func tokenize(s string, maxTokens int) []string {
 			for i < len(runes) && unicode.Is(unicode.Han, runes[i]) {
 				i++
 			}
-			segment := runes[start:i]
-			remaining := len(segment)
-			if maxTokens > 0 {
-				remaining = maxTokens - len(out)
-			}
-			for _, han := range segment[:min(len(segment), remaining)] {
-				out = append(out, string(han))
-			}
-			if maxTokens > 0 && len(out) >= maxTokens {
-				return out
-			}
-			for j := 0; j+1 < len(segment); j++ {
-				out = append(out, string(segment[j:j+2]))
+			for _, word := range hanTokens(runes[start:i], extra) {
+				out = append(out, word)
 				if maxTokens > 0 && len(out) >= maxTokens {
 					return out
 				}

@@ -151,7 +151,7 @@ type Service struct {
 	toolSetCache        map[string]cachedToolSet
 	toolSetCacheVersion uint64
 	toolSetCacheMu      sync.RWMutex
-	searchKeywordsFn    func(originalName, description string) string
+	searchKeywordsFn    func(originalName, description string) (string, []string)
 	accountLimitMu      sync.Mutex
 	accountLimits       map[string]accountLimitState
 	// routingStrategy 为同名工具多来源时的调用选择策略。
@@ -202,12 +202,12 @@ func (s *Service) SetToolAccessAuthorizer(authorizer ToolAccessAuthorizer) *Serv
 
 // SetSearchKeywords 注入智能模式检索的增强文本来源（AI 生成的中文简介与关键词）。
 // 仅在装配阶段调用；增强文本变化后由调用方触发 InvalidateToolSetCache 重建索引。
-func (s *Service) SetSearchKeywords(fn func(originalName, description string) string) *Service {
+func (s *Service) SetSearchKeywords(fn func(originalName, description string) (string, []string)) *Service {
 	s.searchKeywordsFn = fn
 	return s
 }
 
-func (s *Service) searchKeywords() func(originalName, description string) string {
+func (s *Service) searchKeywords() func(originalName, description string) (string, []string) {
 	return s.searchKeywordsFn
 }
 
@@ -560,7 +560,7 @@ func (s *Service) BuildToolSearchSet(ctx context.Context, apiKeyID string) ([]do
 			UpstreamTags:  discovery.UpstreamTags,
 		}
 		if keywords := s.searchKeywords(); keywords != nil {
-			doc.Keywords = keywords(discovery.Tool.OriginalName, discovery.Tool.Description)
+			doc.Keywords, doc.KeywordPhrases = keywords(discovery.Tool.OriginalName, discovery.Tool.Description)
 		}
 		docs = append(docs, doc)
 	}

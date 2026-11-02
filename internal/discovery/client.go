@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"sort"
 	"strings"
 	"time"
 
@@ -92,6 +93,75 @@ func (c *client) complete(ctx context.Context, p risk.Provider, system, user str
 		return "", Usage{}, err
 	}
 	return text, extractUsage(raw), nil
+}
+
+// listModels 读取 OpenAI 兼容接口的模型列表（GET {base}/models）。
+func (c *client) listModels(ctx context.Context, p risk.Provider) ([]string, error) {
+	base, err := url.Parse(strings.TrimSpace(p.BaseURL))
+	if err != nil {
+		return nil, fmt.Errorf("Base URL 无效")
+	}
+	base.Path = path.Join(base.Path, "models")
+	httpClient, err := c.httpClient(p, 30*time.Second)
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base.String(), nil)
+	if err != nil {
+		return nil, fmt.Errorf("创建请求失败：%w", err)
+	}
+	if p.APIKey != "" {
+		req.Header.Set("Authorization", "Bearer "+p.APIKey)
+	}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, classifyTransportError(ctx, err)
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
+	if err != nil {
+		return nil, classifyTransportError(ctx, err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, &RequestError{StatusCode: resp.StatusCode, Message: errorMessage(raw)}
+	}
+	var body struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+		Models []struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		} `json:"models"`
+	}
+	if err := json.Unmarshal(raw, &body); err != nil {
+		return nil, errors.New("模型列表格式无法识别")
+	}
+	seen := map[string]struct{}{}
+	out := []string{}
+	add := func(id string) {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			return
+		}
+		if _, dup := seen[id]; dup {
+			return
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	for _, m := range body.Data {
+		add(m.ID)
+	}
+	for _, m := range body.Models {
+		if m.ID != "" {
+			add(m.ID)
+		} else {
+			add(strings.TrimPrefix(m.Name, "models/"))
+		}
+	}
+	sort.Strings(out)
+	return out, nil
 }
 
 func (c *client) httpClient(p risk.Provider, timeout time.Duration) (*http.Client, error) {
